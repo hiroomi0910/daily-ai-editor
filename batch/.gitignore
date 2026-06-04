@@ -1,0 +1,3 @@
+# Ignore all logs in batch logs directory
+logs/*
+!logs/.gitkeep

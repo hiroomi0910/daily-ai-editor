@@ -1,0 +1,7 @@
+{
+  "outputMode": "local",
+  "projectWorkspace": "03_Projects/SIZU_PROJECT",
+  "dailyArticleDirectory": "daily_ai",
+  "logDirectory": "ai-editor/logs",
+  "generationInputDirectory": "generation_inputs"
+}

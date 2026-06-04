@@ -1,0 +1,26 @@
+{
+  "name": "sizu-project",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsc && node dist/index.js",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "login:x": "tsc && node dist/scripts/loginTwitter.js",
+    "login:instagram": "tsc && node dist/scripts/loginInstagram.js",
+    "login:facebook": "tsc && node dist/scripts/loginFacebook.js",
+    "login:sizu": "tsc && node dist/scripts/loginSizu.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "playwright": "^1.60.0"
+  }
+}
