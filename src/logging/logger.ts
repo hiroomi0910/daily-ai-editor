@@ -4,6 +4,7 @@ import type { AppConfig } from "../config/types.js";
 
 export type Logger = {
   info: (message: string, context?: Record<string, unknown>) => void;
+  warn: (message: string, context?: Record<string, unknown>) => void;
   error: (message: string, context?: Record<string, unknown>) => void;
 };
 
@@ -14,13 +15,14 @@ export function createLogger(config: AppConfig): Logger {
 
   return {
     info: (message, context) => writeLog(logFilePath, "info", message, context),
+    warn: (message, context) => writeLog(logFilePath, "warn", message, context),
     error: (message, context) => writeLog(logFilePath, "error", message, context),
   };
 }
 
 function writeLog(
   logFilePath: string,
-  level: "info" | "error",
+  level: "info" | "warn" | "error",
   message: string,
   context?: Record<string, unknown>,
 ): void {

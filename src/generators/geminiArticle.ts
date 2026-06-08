@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config/types.js";
 import type { GenerationInput } from "../generationInputs/renderGenerationInput.js";
 import type { GeneratedArticle } from "../types/article.js";
+import { withRetry, NonRetryableError, isRetryableStatus, isQuotaExhausted } from "../utils/retry.js";
 
 export async function generateGeminiArticle(
   config: AppConfig,
@@ -26,44 +27,69 @@ export async function generateGeminiArticle(
     "}"
   ].join("\n");
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: generationInput.markdown }]
-        }
-      ],
-      systemInstruction: {
-        parts: [{ text: systemInstructions }]
-      },
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            title: { type: "STRING" },
-            tags: {
-              type: "ARRAY",
-              items: { type: "STRING" }
-            },
-            body: { type: "STRING" }
-          },
-          required: ["title", "body"]
-        },
-        temperature: 0.7,
+  const requestBody = JSON.stringify({
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: generationInput.markdown }]
       }
-    }),
+    ],
+    systemInstruction: {
+      parts: [{ text: systemInstructions }]
+    },
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "OBJECT",
+        properties: {
+          title: { type: "STRING" },
+          tags: {
+            type: "ARRAY",
+            items: { type: "STRING" }
+          },
+          body: { type: "STRING" }
+        },
+        required: ["title", "body"]
+      },
+      temperature: 0.7,
+    }
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gemini API request failed: ${response.status} ${response.statusText} - ${errorText}`);
-  }
+  const response = await withRetry(
+    async () => {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: requestBody,
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        // クォータ枯渇 or 4xx クライアントエラー → リトライしない
+        if (isQuotaExhausted(res.status, errorText)) {
+          throw new NonRetryableError(
+            res.status,
+            `Gemini API quota exhausted (${res.status}). Daily limit reached. ${errorText}`
+          );
+        }
+        if (!isRetryableStatus(res.status, errorText)) {
+          throw new NonRetryableError(
+            res.status,
+            `Gemini API request failed with non-retryable status ${res.status} ${res.statusText}: ${errorText}`
+          );
+        }
+        // 503 / 500 / 429 レート制限 → エラーをスローしてリトライさせる
+        throw new Error(`Gemini API request failed: ${res.status} ${res.statusText} - ${errorText}`);
+      }
+
+      return res;
+    },
+    { maxRetries: 3, initialDelayMs: 5000, backoffFactor: 2.0 },
+    "Gemini API"
+  );
+
 
   const rawBody = await response.text();
   let data: any;

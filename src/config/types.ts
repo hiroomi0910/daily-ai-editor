@@ -35,4 +35,5 @@ export type AppConfig = {
   sizuSessionPath: string;
   sizuUsername: string | undefined;
   targetDate: string | undefined;
+  redoMode: boolean;
 };

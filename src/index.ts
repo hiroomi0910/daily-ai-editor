@@ -16,6 +16,8 @@ import { buildGenerationInput } from "./generationInputs/renderGenerationInput.j
 import { writeDailyArticle } from "./writers/obsidian/writeDailyArticle.js";
 import { writeGenerationInput } from "./writers/generationInputs/writeGenerationInput.js";
 import { writeRawLog } from "./writers/rawLogs/writeRawLog.js";
+import { clearDayLogs } from "./redo/clearDayLogs.js";
+import { Spinner } from "./utils/spinner.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -41,6 +43,7 @@ async function main(): Promise<void> {
   });
 
   console.log(`[Target Date] ${date}`);
+  console.log(`[Mode] ${config.redoMode ? "REDO (logs will be cleared before collection)" : "Normal"}`);
   console.log(`[Enabled Sources] ${[
     config.blueskyActor ? "Bluesky" : null,
     config.githubUsername ? "GitHub" : null,
@@ -50,6 +53,19 @@ async function main(): Promise<void> {
     config.instagramUsername ? "Instagram" : null,
     config.facebookUsername ? "Facebook" : null,
   ].filter(Boolean).join(", ")}`);
+
+  // --redo モード: 収集前に対象日付のログをクリアしてやり直す
+  if (config.redoMode) {
+    logger.info(`[Redo] Clearing existing logs for ${date} before re-collection...`);
+    const clearResult = await clearDayLogs(config, date);
+    if (clearResult.deletedCount > 0) {
+      logger.info(`[Redo] Cleared ${clearResult.deletedCount} file(s).`, {
+        deletedFiles: clearResult.deletedFiles,
+      });
+    } else {
+      logger.info(`[Redo] No existing logs found for ${date}. Proceeding as fresh run.`);
+    }
+  }
 
   /**
    * 各コレクターを安全に実行するためのヘルパー。
@@ -194,14 +210,43 @@ async function main(): Promise<void> {
     return;
   }
 
+  const spinner = new Spinner();
+
   try {
     let article;
     if (config.aiProvider === "gemini") {
       logger.info("Generating article using Gemini API", { model: config.geminiModel });
-      article = await generateGeminiArticle(config, date, generationInput);
+      try {
+        article = await spinner.wrap(
+          `Generating article with Gemini (${config.geminiModel})...`,
+          () => generateGeminiArticle(config, date, generationInput),
+          "✓ Article generated."
+        );
+      } catch (geminiError) {
+        // Gemini が全リトライ失敗した場合、OpenAI にフォールバック
+        if (config.openaiApiKey) {
+          console.warn(`[Fallback] Gemini failed. Switching to OpenAI (${config.openaiModel})...`);
+          logger.warn("Gemini API failed after all retries. Falling back to OpenAI.", {
+            geminiError: geminiError instanceof Error ? geminiError.message : String(geminiError),
+            fallbackModel: config.openaiModel,
+          });
+          article = await spinner.wrap(
+            `Generating article with OpenAI (${config.openaiModel})...`,
+            () => generateOpenAIArticle(config, date, generationInput),
+            "✓ Article generated (via OpenAI fallback)."
+          );
+        } else {
+          // OpenAI も未設定なら諦めて再スロー
+          throw geminiError;
+        }
+      }
     } else {
       logger.info("Generating article using OpenAI API", { model: config.openaiModel });
-      article = await generateOpenAIArticle(config, date, generationInput);
+      article = await spinner.wrap(
+        `Generating article with OpenAI (${config.openaiModel})...`,
+        () => generateOpenAIArticle(config, date, generationInput),
+        "✓ Article generated."
+      );
     }
     const result = await writeDailyArticle(config, article);
     logger.info("Daily article written", result);
@@ -210,7 +255,11 @@ async function main(): Promise<void> {
     if (existsSync(config.sizuSessionPath)) {
       try {
         logger.info("Publishing generated article to Sizu.me as draft...");
-        const sizuResult = await publishToSizuDraft(config, article);
+        const sizuResult = await spinner.wrap(
+          "Saving draft to sizu.me...",
+          () => publishToSizuDraft(config, article),
+          "✓ Draft saved to sizu.me."
+        );
         if (sizuResult.success) {
           logger.info(sizuResult.note, { url: sizuResult.url });
         } else {

@@ -59,14 +59,18 @@ export function loadConfig(): AppConfig {
   const facebookSessionPath = resolve(vaultPath, projectWorkspace, "ai-editor", "settings", "facebook-session.json");
   const sizuSessionPath = resolve(vaultPath, projectWorkspace, "ai-editor", "settings", "sizu-session.json");
 
-  // Parse command line arguments for --date=YYYY-MM-DD
+  // Parse command line arguments for --date=YYYY-MM-DD and --redo
   let targetDate: string | undefined = undefined;
+  let redoMode = false;
   for (const arg of process.argv) {
     if (arg.startsWith("--date=")) {
       const val = arg.slice(7).trim();
       if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
         targetDate = val;
       }
+    }
+    if (arg === "--redo") {
+      redoMode = true;
     }
   }
 
@@ -111,6 +115,7 @@ export function loadConfig(): AppConfig {
     sizuSessionPath,
     sizuUsername,
     targetDate,
+    redoMode,
   };
 }
 

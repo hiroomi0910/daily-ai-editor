@@ -1,7 +1,24 @@
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { chromium } from "playwright";
 import type { AppConfig } from "../../config/types.js";
 import type { GeneratedArticle } from "../../types/article.js";
+
+function derivePhaseTag(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkg = require("../../../package.json") as { version: string };
+    const parts = pkg.version.split(".");
+    const major = parseInt(parts[0] ?? "0", 10);
+    const minor = parseInt(parts[1] ?? "0", 10);
+    if (major === 1) {
+      return `Phase${minor + 5}`;
+    }
+    return `Phase${minor}`;
+  } catch {
+    return "Phase6"; // フォールバック
+  }
+}
 
 export async function publishToSizuDraft(
   config: AppConfig,
@@ -82,7 +99,7 @@ export async function publishToSizuDraft(
     const tagInput = page.locator('.z-popover input[type="text"]');
     await tagInput.waitFor({ state: "visible", timeout: 10000 });
 
-    const targetTags = ["AI文章生成", "実験中", "日々是好日", "Phase5"];
+    const targetTags = ["AI文章生成", "実験中", "日々是好日", derivePhaseTag()];
     for (const tag of targetTags) {
       console.log(`[Sizu Publisher] タグを入力中: "${tag}"`);
       await tagInput.fill(tag);
