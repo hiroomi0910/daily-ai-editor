@@ -6,6 +6,11 @@ export type InstagramCollectorOptions = {
   username: string | undefined;
   sessionPath: string;
   now: Date;
+  aiProvider?: "openai" | "gemini";
+  geminiApiKey?: string;
+  geminiModel?: string;
+  openaiApiKey?: string;
+  openaiModel?: string;
 };
 
 export async function collectInstagramActivity(
@@ -74,40 +79,121 @@ export async function collectInstagramActivity(
     await page.goto(storyUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
     await page.waitForTimeout(3000); // Wait for potential redirects
 
-    const currentUrl = page.url();
-    const hasStory = currentUrl.includes("/stories/");
+    let currentUrl = page.url();
+    // ユーザー名が含まれるストーリーズURLであることを厳密にチェック
+    const hasStory = currentUrl.includes(`/stories/${username}/`);
     rawData.storiesUrl = currentUrl;
     rawData.hasActiveStory = hasStory;
 
-    if (hasStory) {
-      // Stories exist! Let's check if there is any visible text inside the story
-      const storyText: string = await page.evaluate(() => {
-        // Look for text in stories (commonly spans/divs inside a story element)
-        // Exclude script, style and common UI patterns
-        const elements = Array.from(document.querySelectorAll("span, div, p"));
-        const texts = elements
-          .filter(el => {
-            const parent = el.parentElement?.tagName.toLowerCase();
-            return parent !== 'script' && parent !== 'style';
-          })
-          .map((el: any) => el.textContent || "")
-          .filter((t) => t.trim().length > 5 && !t.includes("stories") && !t.includes("Instagram") && !t.includes("{") && !t.includes("!"));
-        return texts.length > 0 ? texts[0].trim() : "";
-      });
+    const storyItems: { text: string; url: string }[] = [];
 
-      rawData.storyText = storyText;
-      if (storyText) {
-        items.push({
-          id: `instagram-story-${dateStamp}`,
-          source: "instagram",
-          text: `Instagram ストーリーズを投稿しました: "${storyText}"`,
-          createdAt: collectedAt,
+    if (hasStory) {
+      let storyIndex = 1;
+      const seenUrls = new Set<string>();
+
+      while (currentUrl.includes(`/stories/${username}/`)) {
+        // 無限ループ防止用の安全弁（最大20件まで）
+        if (storyIndex > 20) {
+          console.warn("[Instagram] 処理したストーリーズが安全上限の20件を超えたため中断します。");
+          break;
+        }
+
+        // ページ遷移がスタックした場合の重複処理防止
+        if (seenUrls.has(currentUrl)) {
+          console.log("[Instagram] ストーリーズのURL遷移が検出されなかったためループを終了します。");
+          break;
+        }
+        seenUrls.add(currentUrl);
+
+        console.log(`[Instagram] ストーリーズ #${storyIndex} を処理中... URL: ${currentUrl}`);
+        // メディアのロードとアニメーションの落ち着きを待つ
+        await page.waitForTimeout(2000);
+
+        // Check if there is any visible text inside the story
+        const storyText: string = await page.evaluate(() => {
+          const viewer = document.querySelector('section');
+          if (!viewer) return "";
+
+          const elements = Array.from(viewer.querySelectorAll("span, div, p"));
+          const texts = elements
+            .filter(el => {
+              if (el.closest('nav') || el.closest('[role="navigation"]')) return false;
+              const parent = el.parentElement?.tagName.toLowerCase();
+              return parent !== 'script' && parent !== 'style';
+            })
+            .map((el: any) => (el.textContent || "").trim())
+            .filter((t) => {
+              const isGeneric = t.includes("stories") || t.includes("Instagram") || t.includes("{") || t.includes("!");
+              const isNavClump = t.includes("ホーム") && t.includes("リール") && t.includes("メッセージ");
+              return t.length > 5 && !isGeneric && !isNavClump;
+            });
+          return texts.length > 0 ? texts[0].trim() : "";
+        });
+
+        let imageDescription = "";
+        try {
+          console.log(`[Instagram] ストーリーズ #${storyIndex} のスクリーンショットをキャプチャ中...`);
+          let screenshotBuffer: Buffer;
+          if (await page.locator('section').count() > 0) {
+            screenshotBuffer = await page.locator('section').screenshot();
+          } else {
+            screenshotBuffer = await page.screenshot();
+          }
+          const base64Image = screenshotBuffer.toString("base64");
+
+          console.log(`[Instagram] ストーリーズ #${storyIndex} の画像をAIで分析中...`);
+          imageDescription = await describeStoryImage(base64Image, options);
+          console.log(`[Instagram] 画像描写結果: ${imageDescription}`);
+        } catch (visionErr) {
+          console.error(`[Instagram] 画像分析に失敗しました: ${visionErr instanceof Error ? visionErr.message : String(visionErr)}`);
+        }
+
+        // 取得結果テキストを構築
+        let itemText = "";
+        if (storyText && imageDescription) {
+          itemText = `Instagram ストーリーズを投稿しました: "${storyText}" (画像描写: ${imageDescription})`;
+        } else if (storyText) {
+          itemText = `Instagram ストーリーズを投稿しました: "${storyText}"`;
+        } else if (imageDescription) {
+          itemText = `Instagram ストーリーズを投稿しました (画像内容: ${imageDescription})`;
+        } else {
+          itemText = "Instagram ストーリーズを投稿しました。";
+        }
+
+        storyItems.push({
+          text: itemText,
           url: currentUrl,
+        });
+
+        // キーボードの矢印キーで次のストーリーズへ遷移をシミュレート
+        console.log("[Instagram] キーボードの右矢印キーを入力して次のスライドへ遷移します...");
+        await page.keyboard.press("ArrowRight");
+        await page.waitForTimeout(1500); // 遷移アニメーション待機
+
+        currentUrl = page.url();
+        storyIndex++;
+      }
+
+      // 収集したストーリーズを収集データ項目に追加
+      let idx = 1;
+      for (const story of storyItems) {
+        items.push({
+          id: `instagram-story-${dateStamp}-${idx}`,
+          source: "instagram",
+          text: story.text,
+          createdAt: collectedAt,
+          url: story.url,
           metadata: {
             type: "story",
+            index: idx,
+            total: storyItems.length,
           },
         });
+        idx++;
       }
+
+      rawData.storyItems = storyItems;
+      rawData.hasActiveStory = true;
     }
 
     // 2. FEED POST CRAWLING
@@ -213,4 +299,117 @@ function getDateStamp(date: Date): string {
   const day = String(date.getDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
+}
+
+async function describeStoryImage(
+  base64Image: string,
+  options: InstagramCollectorOptions,
+): Promise<string> {
+  const prompt = "これはユーザーのInstagramストーリーズのスクリーンショットです。この画像に写っている内容（テキストがあればそれも含め、画像に描かれているものや情景、雰囲気）を簡潔に1〜2文の日本語で客観的に説明してください。日記の材料として使います。「ユーザーが投稿した画像には〜が写っています」などのように三人称で客観的に描写してください。余計な前置き（「はい、お答えします」など）は省き、描写のみを返してください。";
+
+  const attemptGemini = async () => {
+    if (!options.geminiApiKey) throw new Error("Gemini API key is not configured.");
+    const model = options.geminiModel ?? "gemini-2.5-flash";
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${options.geminiApiKey}`;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: prompt },
+              {
+                inlineData: {
+                  mimeType: "image/png",
+                  data: base64Image,
+                },
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.4,
+          maxOutputTokens: 1000,
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Gemini Vision API error: ${res.status} - ${errText}`);
+    }
+
+    const data = await res.json() as any;
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (text) return text.trim();
+    throw new Error("Empty response from Gemini Vision API");
+  };
+
+  const attemptOpenAI = async () => {
+    if (!options.openaiApiKey) throw new Error("OpenAI API key is not configured.");
+    const model = options.openaiModel ?? "gpt-4o-mini";
+    const url = "https://api.openai.com/v1/chat/completions";
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${options.openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:image/png;base64,${base64Image}`,
+                },
+              },
+            ],
+          },
+        ],
+        temperature: 0.4,
+        max_tokens: 1000,
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`OpenAI Vision API error: ${res.status} - ${errText}`);
+    }
+
+    const data = await res.json() as any;
+    const text = data.choices?.[0]?.message?.content;
+    if (text) return text.trim();
+    throw new Error("Empty response from OpenAI Vision API");
+  };
+
+  const primaryProvider = options.aiProvider ?? "openai";
+  if (primaryProvider === "gemini") {
+    try {
+      return await attemptGemini();
+    } catch (err) {
+      console.warn(`[Instagram] Gemini Vision failed: ${err instanceof Error ? err.message : String(err)}. Trying OpenAI fallback...`);
+      if (options.openaiApiKey) {
+        return await attemptOpenAI();
+      }
+      throw err;
+    }
+  } else {
+    try {
+      return await attemptOpenAI();
+    } catch (err) {
+      console.warn(`[Instagram] OpenAI Vision failed: ${err instanceof Error ? err.message : String(err)}. Trying Gemini fallback...`);
+      if (options.geminiApiKey) {
+        return await attemptGemini();
+      }
+      throw err;
+    }
+  }
 }

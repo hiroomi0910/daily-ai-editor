@@ -154,6 +154,11 @@ async function main(): Promise<void> {
       username: config.instagramUsername,
       sessionPath: config.instagramSessionPath,
       now,
+      aiProvider: config.aiProvider,
+      geminiApiKey: config.geminiApiKey,
+      geminiModel: config.geminiModel,
+      openaiApiKey: config.openaiApiKey,
+      openaiModel: config.openaiModel,
     })),
     runGracefulCollector("facebook", !!config.facebookUsername, () => collectFacebookActivity({
       username: config.facebookUsername,
