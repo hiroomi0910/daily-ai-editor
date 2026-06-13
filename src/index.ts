@@ -98,11 +98,20 @@ async function main(): Promise<void> {
     }
 
     console.log(`[${displayName}] Starting collection...`);
+    let timerId: NodeJS.Timeout | undefined;
     try {
-      const result = await fn();
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timerId = setTimeout(() => {
+          reject(new Error("Collection timed out (120 seconds limit reached)"));
+        }, 120000);
+      });
+
+      const result = await Promise.race([fn(), timeoutPromise]);
+      if (timerId) clearTimeout(timerId);
       console.log(`[${displayName}] Collection finished. Found ${result.items.length} items.`);
       return result;
     } catch (error) {
+      if (timerId) clearTimeout(timerId);
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[${displayName}] Collection failed: ${msg}`);
       logger.error(`Graceful collector caught error on source [${source}]`, {
