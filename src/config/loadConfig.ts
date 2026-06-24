@@ -40,7 +40,7 @@ export function loadConfig(): AppConfig {
   const openaiApiKey = emptyToUndefined(process.env.OPENAI_API_KEY);
   const openaiModel = emptyToUndefined(process.env.SIZU_OPENAI_MODEL) ?? "gpt-4o-mini";
   const geminiApiKey = emptyToUndefined(process.env.GEMINI_API_KEY);
-  const geminiModel = emptyToUndefined(process.env.SIZU_GEMINI_MODEL) ?? "gemini-2.5-flash";
+  const geminiModel = emptyToUndefined(process.env.SIZU_GEMINI_MODEL) ?? "gemini-3.1-flash-lite";
 
   // ブラウザのチャンネル設定（デフォルトは 'chrome'、必要に応じて .env で 'msedge' などに変更可能）
   // const browserChannel = process.env.SIZU_BROWSER_CHANNEL ?? "chrome";
@@ -86,6 +86,17 @@ export function loadConfig(): AppConfig {
     }
   }
 
+  const collectorTimeoutMs = parseBoundedInteger(process.env.SIZU_COLLECTOR_TIMEOUT_MS, {
+    defaultValue: 120_000,
+    min: 30_000,
+    max: 600_000,
+  });
+  const instagramTimeoutMs = parseBoundedInteger(process.env.SIZU_INSTAGRAM_TIMEOUT_MS, {
+    defaultValue: 300_000,
+    min: 60_000,
+    max: 900_000,
+  });
+
   return {
     outputMode,
     vaultPath,
@@ -116,6 +127,8 @@ export function loadConfig(): AppConfig {
     sizuUsername,
     targetDate,
     redoMode,
+    collectorTimeoutMs,
+    instagramTimeoutMs,
   };
 }
 

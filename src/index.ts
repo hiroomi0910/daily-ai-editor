@@ -11,13 +11,101 @@ import type { CollectionResult } from "./collectors/types.js";
 import { publishToSizuDraft } from "./publishers/sizu/index.js";
 import { createLogger } from "./logging/logger.js";
 import { generateOpenAIArticle } from "./generators/openaiArticle.js";
-import { generateGeminiArticle } from "./generators/geminiArticle.js";
+import { generateArticleWithGemini } from "./generators/geminiArticle.js";
 import { buildGenerationInput } from "./generationInputs/renderGenerationInput.js";
 import { writeDailyArticle } from "./writers/obsidian/writeDailyArticle.js";
 import { writeGenerationInput } from "./writers/generationInputs/writeGenerationInput.js";
 import { writeRawLog } from "./writers/rawLogs/writeRawLog.js";
 import { clearDayLogs } from "./redo/clearDayLogs.js";
 import { Spinner } from "./utils/spinner.js";
+
+// --- CONSOLE COLORIZATION OVERRIDES ---
+const colors = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  magenta: "\x1b[35m",
+  cyan: "\x1b[36m",
+  gray: "\x1b[90m",
+  white: "\x1b[37m",
+};
+
+const snsColors: Record<string, string> = {
+  "[Instagram]": colors.magenta, // Purple/Magenta
+  "[Bluesky]": colors.cyan,     // Cyan
+  "[GitHub]": colors.gray,       // Gray
+  "[Twitter]": colors.blue,      // Blue
+  "[Threads]": colors.bold + colors.white, // Bold White
+  "[Facebook]": colors.blue,     // Deep Blue
+  "[RSS]": colors.green,         // Green
+  "[info]": colors.cyan,         // Cyan
+  "[warn]": colors.yellow,       // Yellow
+  "[error]": colors.red,         // Red
+};
+
+function colorizeText(text: string): string {
+  if (typeof text !== "string") return text;
+  let result = text;
+
+  // 1. Prefix matches
+  for (const [prefix, color] of Object.entries(snsColors)) {
+    if (result.includes(prefix)) {
+      result = result.replaceAll(prefix, `${color}${prefix}${colors.reset}`);
+    }
+  }
+
+  // 2. Found N items matches
+  result = result.replace(/Found (\d+) items/g, (match, countStr) => {
+    const count = parseInt(countStr, 10);
+    const color = count > 0 ? colors.green : colors.yellow;
+    return `${color}${match}${colors.reset}`;
+  });
+
+  // 3. Error and failure matches
+  const lowerResult = result.toLowerCase();
+  if (lowerResult.includes("error") || lowerResult.includes("failed") || result.includes("✗")) {
+    if (result.startsWith("[error]") || result.startsWith("✗") || result.includes("Collection failed")) {
+      return `${colors.red}${result}${colors.reset}`;
+    }
+    result = result.replace(/(error|failed|✗)/gi, `${colors.red}$&${colors.reset}`);
+  }
+
+  return result;
+}
+
+const originalLog = console.log;
+console.log = function (...args: any[]) {
+  const colorizedArgs = args.map(arg => (typeof arg === "string" ? colorizeText(arg) : arg));
+  originalLog.apply(console, colorizedArgs);
+};
+
+const originalError = console.error;
+console.error = function (...args: any[]) {
+  const colorizedArgs = args.map(arg => {
+    if (typeof arg === "string") {
+      const colorized = colorizeText(arg);
+      return colorized.includes("\x1b[") ? colorized : `${colors.red}${colorized}${colors.reset}`;
+    }
+    return arg;
+  });
+  originalError.apply(console, colorizedArgs);
+};
+
+const originalWarn = console.warn;
+console.warn = function (...args: any[]) {
+  const colorizedArgs = args.map(arg => {
+    if (typeof arg === "string") {
+      const colorized = colorizeText(arg);
+      return colorized.includes("\x1b[") ? colorized : `${colors.yellow}${colorized}${colors.reset}`;
+    }
+    return arg;
+  });
+  originalWarn.apply(console, colorizedArgs);
+};
+// --------------------------------------
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -69,12 +157,13 @@ async function main(): Promise<void> {
 
   /**
    * 各コレクターを安全に実行するためのヘルパー。
-   * promise ではなく factory 関数 (fn) を渡すことで、実行直前にログを出せるようにします。
+   * AbortSignal によるタイムアウトを使い、Instagram 等は部分成功を返せるようにする。
    */
   async function runGracefulCollector(
     source: CollectionResult["source"],
     isEnabled: boolean,
-    fn: () => Promise<CollectionResult>
+    fn: (signal: AbortSignal) => Promise<CollectionResult>,
+    timeoutMs: number = config.collectorTimeoutMs,
   ): Promise<CollectionResult> {
     const displayNames: Record<string, string> = {
       github: "GitHub",
@@ -97,32 +186,34 @@ async function main(): Promise<void> {
       };
     }
 
-    console.log(`[${displayName}] Starting collection...`);
-    let timerId: NodeJS.Timeout | undefined;
-    try {
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timerId = setTimeout(() => {
-          reject(new Error("Collection timed out (120 seconds limit reached)"));
-        }, 120000);
-      });
+    console.log(`[${displayName}] Starting collection... (timeout: ${Math.round(timeoutMs / 1000)}s)`);
+    const abortController = new AbortController();
+    const timerId = setTimeout(() => {
+      abortController.abort(new Error(`Collection timed out (${Math.round(timeoutMs / 1000)} seconds limit reached)`));
+    }, timeoutMs);
 
-      const result = await Promise.race([fn(), timeoutPromise]);
-      if (timerId) clearTimeout(timerId);
-      console.log(`[${displayName}] Collection finished. Found ${result.items.length} items.`);
+    try {
+      const result = await fn(abortController.signal);
+      const partialNote =
+        result.raw && typeof result.raw === "object" && "mode" in result.raw && result.raw.mode === "partial"
+          ? " (partial)"
+          : "";
+      console.log(`[${displayName}] Collection finished. Found ${result.items.length} items.${partialNote}`);
       return result;
     } catch (error) {
-      if (timerId) clearTimeout(timerId);
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`[${displayName}] Collection failed: ${msg}`);
       logger.error(`Graceful collector caught error on source [${source}]`, {
-        error: error instanceof Error ? error.message : String(error)
+        error: msg,
       });
       return {
         source,
         collectedAt: now.toISOString(),
         items: [],
-        raw: { error: error instanceof Error ? error.message : String(error) }
+        raw: { error: msg },
       };
+    } finally {
+      clearTimeout(timerId);
     }
   }
 
@@ -135,41 +226,61 @@ async function main(): Promise<void> {
     instagramResult,
     facebookResult,
   ] = await Promise.all([
-    runGracefulCollector("bluesky", !!config.blueskyActor, () => collectBlueskyPosts({
+    runGracefulCollector("bluesky", !!config.blueskyActor, (_signal) => collectBlueskyPosts({
       actor: config.blueskyActor,
       limit: config.blueskyLimit,
       filter: config.blueskyFilter,
       now,
     })),
-    runGracefulCollector("github", !!config.githubUsername, () => collectGitHubEvents({
+    runGracefulCollector("github", !!config.githubUsername, (_signal) => collectGitHubEvents({
       username: config.githubUsername,
       token: config.githubToken,
       now,
     })),
-    runGracefulCollector("rss", config.rssFeeds.length > 0, () => collectRssFeeds({
+    runGracefulCollector("rss", config.rssFeeds.length > 0, (_signal) => collectRssFeeds({
       feeds: config.rssFeeds,
       now,
     })),
-    runGracefulCollector("twitter", !!config.twitterUsername, () => collectTwitterPosts({
+    runGracefulCollector("twitter", !!config.twitterUsername, (signal) => collectTwitterPosts({
       username: config.twitterUsername,
       sessionPath: config.xSessionPath,
       now,
-    })),
-    runGracefulCollector("threads", !!config.threadsUsername, () => collectThreadsPosts({
-      username: config.threadsUsername,
-      now,
-    })),
-    runGracefulCollector("instagram", !!config.instagramUsername, () => collectInstagramActivity({
-      username: config.instagramUsername,
-      sessionPath: config.instagramSessionPath,
-      now,
+      signal,
       aiProvider: config.aiProvider,
       geminiApiKey: config.geminiApiKey,
       geminiModel: config.geminiModel,
       openaiApiKey: config.openaiApiKey,
       openaiModel: config.openaiModel,
     })),
-    runGracefulCollector("facebook", !!config.facebookUsername, () => collectFacebookActivity({
+    runGracefulCollector("threads", !!config.threadsUsername, (signal) => collectThreadsPosts({
+      username: config.threadsUsername,
+      now,
+      signal,
+      aiProvider: config.aiProvider,
+      geminiApiKey: config.geminiApiKey,
+      geminiModel: config.geminiModel,
+      openaiApiKey: config.openaiApiKey,
+      openaiModel: config.openaiModel,
+    })),
+    runGracefulCollector(
+      "instagram",
+      !!config.instagramUsername,
+      (signal) => collectInstagramActivity({
+        username: config.instagramUsername,
+        sessionPath: config.instagramSessionPath,
+        now,
+        targetDate: config.targetDate,
+        deadlineMs: Date.now() + config.instagramTimeoutMs,
+        signal,
+        aiProvider: config.aiProvider,
+        geminiApiKey: config.geminiApiKey,
+        geminiModel: config.geminiModel,
+        openaiApiKey: config.openaiApiKey,
+        openaiModel: config.openaiModel,
+      }),
+      config.instagramTimeoutMs,
+    ),
+    runGracefulCollector("facebook", !!config.facebookUsername, (_signal) => collectFacebookActivity({
       username: config.facebookUsername,
       sessionPath: config.facebookSessionPath,
       now,
@@ -231,9 +342,19 @@ async function main(): Promise<void> {
     if (config.aiProvider === "gemini") {
       logger.info("Generating article using Gemini API", { model: config.geminiModel });
       try {
+        const systemPrompt = [
+          "あなたは冷静で思索的なAI編集者です。ユーザーの活動記録を元に、静かで情緒的な日記を作成してください。画像が含まれる場合は、その視覚情報を描写に積極的に取り入れてください。",
+          "CRITICAL: Never start or end the article with generic boilerplate or clichés. Start the very first sentence of the body text directly with a specific activity, thought, or project from today's log.",
+          "以下のスキーマに沿ったJSON形式で厳密に出力してください：",
+          "{",
+          "  \"title\": \"日記の生成内容にふさわしい、詩的で静かな日本語のタイトル (string)\",",
+          "  \"tags\": [\"テーマを表す関連タグ ('daily-ai' を必ず含め、その他カスタムタグを数個) (array of strings)\"],",
+          "  \"body\": \"日記の本文（日本語）。500〜800字程度。思索的でパーソナル、ネットネイティブなトーン。 (string)\"",
+          "}"
+        ].join("\n");
         article = await spinner.wrap(
           `Generating article with Gemini (${config.geminiModel})...`,
-          () => generateGeminiArticle(config, date, generationInput),
+          () => generateArticleWithGemini(config, generationInput.items, systemPrompt, date),
           "✓ Article generated."
         );
       } catch (geminiError) {
@@ -299,11 +420,8 @@ async function main(): Promise<void> {
 }
 
 function getDateStamp(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
+  // 常に日本時間（Asia/Tokyo）の YYYY-MM-DD 文字列を取得する
+  return date.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 }
 
 main().catch((error: unknown) => {

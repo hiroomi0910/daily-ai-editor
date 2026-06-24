@@ -114,11 +114,16 @@ try {
 
 Write-Host "Starting SIZU_PROJECT diary pipeline..."
 try {
+    $oldEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue" # stderr (2>&1) が ErrorRecord として伝播し catch ブロックが跳ねるのを防ぐ
+
     & node dist/index.js $args 2>&1 | ForEach-Object {
         $line = $_.ToString()
         Write-Host $line
         $line | Out-File -FilePath $LogFile -Append -Encoding utf8
     }
+
+    $ErrorActionPreference = $oldEAP
 
     $ExitCode = $LastExitCode
     if ($ExitCode -eq 0) {

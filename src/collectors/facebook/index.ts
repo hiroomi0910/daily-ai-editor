@@ -68,13 +68,24 @@ export async function collectFacebookActivity(
     // Navigate directly to Facebook Activity Log for Likes and Reactions
     console.log("[Facebook] Navigating to Likes & Reactions activity log...");
     const url = "https://www.facebook.com/me/allactivity?category_key=LIKEDPOSTS";
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 });
+    await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
+
+    // Check for login wall
+    if (page.url().includes("login.php") || page.url().includes("/login/")) {
+      console.warn(`[Facebook] ログイン画面へリダイレクトされました。セッションが切れている可能性があります: ${page.url()}`);
+    }
 
     // Wait for the activity log container to load
     try {
-      await page.waitForSelector("div[role=\"feed\"]", { timeout: 15000 });
-    } catch {
-      // Fallback selector or let it load
+      await page.waitForSelector("div[role=\"feed\"], div[role=\"main\"], article", { timeout: 15000 });
+    } catch (e) {
+      console.warn(`[Facebook] アクティビティログのコンテナが見つかりません。`);
+    }
+
+    // Scroll down slightly to trigger lazy loading
+    for (let i = 0; i < 4; i++) {
+      await page.evaluate(() => window.scrollBy(0, 500));
+      await page.waitForTimeout(2000);
     }
 
     // Capture the text items in the activity list.
@@ -148,9 +159,6 @@ export async function collectFacebookActivity(
 }
 
 function getDateStamp(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
+  // 実行環境によらず、常に日本時間での YYYY-MM-DD を取得する
+  return date.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 }

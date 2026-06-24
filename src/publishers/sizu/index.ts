@@ -61,9 +61,7 @@ export async function publishToSizuDraft(
     const newPostUrl = "https://sizu.me/new";
 
     console.log("[Sizu Publisher] 新規投稿画面（エディタ）へアクセス中...");
-    await page.goto(newPostUrl, { waitUntil: "domcontentloaded", timeout: 25000 });
-    // エディタのルート要素が表示されるまで待機
-    await page.waitForSelector(".ProseMirror", { state: "visible", timeout: 15000 });
+    await page.goto(newPostUrl, { waitUntil: "load", timeout: 45000 });
 
     // Check if redirected to login page (session expired)
     const currentUrl = page.url();
@@ -71,14 +69,18 @@ export async function publishToSizuDraft(
       throw new Error("しずかなインターネットのセッションが期限切れです。再度 'npm run login:sizu' を実行してください。");
     }
 
+    // エディタのルート要素が表示されるまで待機（タイムアウトを延長）
+    await page.waitForSelector(".ProseMirror", { state: "visible", timeout: 60000 });
+    await page.waitForTimeout(2000); // エディタ描画の安定化待ち
+
     console.log(`[Sizu Publisher] エディタURL: ${currentUrl}`);
     console.log("[Sizu Publisher] エディタフォームを読み込んでいます...");
 
     const titleSelector = "textarea#post-title";
     const bodySelector = "div.ProseMirror";
 
-    await page.waitForSelector(titleSelector, { timeout: 15000 });
-    await page.waitForSelector(bodySelector, { timeout: 15000 });
+    await page.waitForSelector(titleSelector, { state: "visible", timeout: 45000 });
+    await page.waitForSelector(bodySelector, { state: "visible", timeout: 45000 });
 
     // 1. Fill Title
     console.log(`[Sizu Publisher] タイトルを入力中: "${article.title}"`);

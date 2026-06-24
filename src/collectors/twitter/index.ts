@@ -1,11 +1,18 @@
 import { existsSync } from "node:fs";
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
+import { describeVisionImage } from "../instagram/index.js";
 
 export type TwitterCollectorOptions = {
   username: string | undefined;
   sessionPath: string;
   now: Date;
+  signal?: AbortSignal;
+  aiProvider?: "openai" | "gemini";
+  geminiApiKey?: string;
+  geminiModel?: string;
+  openaiApiKey?: string;
+  openaiModel?: string;
 };
 
 export async function collectTwitterPosts(
@@ -65,47 +72,39 @@ export async function collectTwitterPosts(
     const page = await context.newPage();
 
     // Check if we got redirected to a login page (session expired)
-    await page.goto(`https://x.com/home`, { waitUntil: "domcontentloaded", timeout: 20000 });
+    await page.goto(`https://x.com/home`, { waitUntil: "load", timeout: 25000 });
+    await page.waitForTimeout(3000);
+
     if (page.url().includes("login") || page.url().includes("flow/login")) {
-      throw new Error(`Redirected to login page. Your Twitter/X session may have expired. Please re-authenticate by running 'npm run login:x'.`);
+      console.warn(`[Twitter] ログイン画面へリダイレクトされました。セッションが切れている可能性があります: ${page.url()}`);
     }
 
     // 1. Fetch own tweets from the profile timeline
     const profileUrl = `https://x.com/${username}`;
     console.log(`[Twitter] Loading profile: ${profileUrl}`);
-    await page.goto(profileUrl, { waitUntil: "domcontentloaded", timeout: 25000 });
+    await page.goto(profileUrl, { waitUntil: "networkidle", timeout: 25000 });
+    if (options.signal?.aborted) throw new Error("Twitter collection aborted");
     const rawTweets = await scrapeTweetsFromPage(page);
+    const processedTweets = await enrichTweetsWithVision(page, rawTweets, options, getDateStamp(options.now));
 
     // 2. Fetch likes
     const likesUrl = `https://x.com/${username}/likes`;
     console.log(`[Twitter] Loading likes: ${likesUrl}`);
-    await page.goto(likesUrl, { waitUntil: "domcontentloaded", timeout: 25000 });
+    await page.goto(likesUrl, { waitUntil: "networkidle", timeout: 25000 });
+    if (options.signal?.aborted) throw new Error("Twitter collection aborted");
     const rawLikes = await scrapeTweetsFromPage(page);
+    const processedLikes = await enrichTweetsWithVision(page, rawLikes, options, getDateStamp(options.now));
 
-    const allRawTweets = [...rawTweets, ...rawLikes];
+    const allRawTweets = [...rawTweets, ...rawLikes]; // For raw log
+    const allProcessedTweets = [...processedTweets, ...processedLikes];
 
     await browser.close();
 
     const dateStamp = getDateStamp(options.now); // YYYY-MM-DD
 
-    // Filter items matching the target date
-    const filteredItems = allRawTweets.filter((t) => {
-      if (!t.createdAt) return false;
-      try {
-        const d = new Date(t.createdAt);
-        // 日本時間(JST)での日付文字列を取得して比較
-        const jstDate = d.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
-        return jstDate === dateStamp;
-      } catch {
-        return t.createdAt.startsWith(dateStamp);
-      }
-    });
-
-    console.log(`[Twitter] Total found: ${allRawTweets.length}. Today (${dateStamp}): ${filteredItems.length} matches.`);
-
     const items: CollectedActivityItem[] = [];
 
-    for (const t of filteredItems) {
+    for (const t of allProcessedTweets) {
       if (!t.text.trim()) {
         continue;
       }
@@ -149,36 +148,71 @@ export async function collectTwitterPosts(
   }
 }
 
+async function enrichTweetsWithVision(
+  page: Page,
+  rawItems: any[],
+  options: TwitterCollectorOptions,
+  dateStamp: string
+): Promise<any[]> {
+  const results: any[] = [];
+  for (const t of rawItems) {
+    if (!t.createdAt) continue;
+    const d = new Date(t.createdAt);
+    const jstDate = d.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+    if (jstDate !== dateStamp) continue;
+
+    let finalText = t.text;
+    if (t.hasImages && (options.geminiApiKey || options.openaiApiKey)) {
+      try {
+        console.log(`[Twitter] 画像が含まれるポストを検出しました。解析中: ${t.url}`);
+        const article = page.locator(`article:has(a[href*="${t.id}"])`).first();
+        if (await article.count() > 0) {
+          const screenshotBuffer = await article.screenshot({ timeout: 10000 });
+          const base64Image = screenshotBuffer.toString("base64");
+          const description = await describeVisionImage(base64Image, options);
+          finalText = `${t.text} (画像描写: ${description})`;
+          console.log(`[Twitter] 画像解析完了: ${description}`);
+        }
+      } catch (e) {
+        console.warn(`[Twitter] 画像解析に失敗しましたが、テキストのみで続行します: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    results.push({ ...t, text: finalText });
+  }
+  return results;
+}
+
 async function scrapeTweetsFromPage(page: any): Promise<any[]> {
   // Wait for React to settle
-  await page.waitForTimeout(4000);
-  
-  try {
-    await page.waitForSelector('article[data-testid="tweet"]', { timeout: 10000 });
-  } catch (e) {
-    // It's possible there are no tweets visible yet
-  }
+  await page.waitForTimeout(20000);
+  await page.waitForSelector('article[data-testid="tweet"]', { timeout: 10000 }).catch(() => undefined);
 
+  // Scroll down to load more tweets (especially useful for likes)
+  // より多くの「いいね」や投稿を捕捉するためスクロール回数を増やします
+  for (let i = 0; i < 6; i++) {
+    await page.evaluate(() => window.scrollBy(0, 800));
+    await page.waitForTimeout(2000);
+  }
+  
   return await page.$$eval('article[data-testid="tweet"]', (articles: Element[]) => {
     return articles.map((article) => {
       const textEl = article.querySelector('[data-testid="tweetText"]');
       const timeEl = article.querySelector('time');
       const linkEl = article.querySelector('a[href*="/status/"]');
+      const hasImages = !!article.querySelector('[data-testid="tweetPhoto"]');
 
       return {
         text: textEl ? textEl.textContent || "" : "",
         createdAt: timeEl ? timeEl.getAttribute("datetime") || "" : "",
         url: linkEl ? "https://x.com" + linkEl.getAttribute("href") : "",
         id: linkEl ? linkEl.getAttribute("href") || "" : "",
+        hasImages,
       };
     });
   });
 }
 
 function getDateStamp(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
+  // Always compare using JST YYYY-MM-DD to match filter logic
+  return date.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 }

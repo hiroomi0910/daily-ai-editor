@@ -36,4 +36,6 @@ export type AppConfig = {
   sizuUsername: string | undefined;
   targetDate: string | undefined;
   redoMode: boolean;
+  collectorTimeoutMs: number;
+  instagramTimeoutMs: number;
 };
