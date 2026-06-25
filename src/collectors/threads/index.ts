@@ -79,14 +79,39 @@ export async function collectThreadsPosts(
 
     // スクロールしてコンテンツをハイドレーションさせる
     console.log(`[Threads] 過去の投稿を捕捉するためスクロール中...`);
+    const dateStamp = getDateStamp(options.now); // YYYY-MM-DD
     for (let i = 0; i < 12; i++) {
-      await page.evaluate(() => window.scrollBy(0, 1000));
-      await page.waitForTimeout(2000);
+      await page.evaluate(() => window.scrollBy(0, 1200));
+      await page.waitForTimeout(1500);
       if (options.signal?.aborted) throw new Error("Aborted");
+
+      // Check if the oldest loaded tweet is older than targetDate to stop scrolling early
+      const lastTweetDate = await page.evaluate(() => {
+        const timeElements = Array.from(document.querySelectorAll('time'));
+        if (timeElements.length === 0) return null;
+        const lastTime = timeElements[timeElements.length - 1];
+        if (!lastTime) return null;
+        return lastTime.getAttribute("datetime") || null;
+      });
+
+      if (lastTweetDate) {
+        try {
+          const d = new Date(lastTweetDate);
+          if (!isNaN(d.getTime())) {
+            const jstDate = d.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+            if (jstDate < dateStamp) {
+              console.log(`[Threads] Oldest loaded tweet is from ${jstDate}, which is older than target date ${dateStamp}. Stopping scroll early at iteration ${i + 1}.`);
+              break;
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
     }
 
     // スクロール後に要素が安定するのを待つ
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(1000);
 
     // Crawl thread items
     // articleタグやtime要素を起点に記事を特定
@@ -154,7 +179,6 @@ export async function collectThreadsPosts(
         }, [] as any[]);
     }, sanitizedUsername);
 
-    const dateStamp = getDateStamp(options.now); // YYYY-MM-DD
     const items: CollectedActivityItem[] = [];
 
     console.log(

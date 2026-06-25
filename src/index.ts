@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { loadConfig } from "./config/loadConfig.js";
 import { collectBlueskyPosts } from "./collectors/bluesky/index.js";
 import { collectGitHubEvents } from "./collectors/github/index.js";
@@ -251,6 +252,10 @@ async function main(): Promise<void> {
       geminiModel: config.geminiModel,
       openaiApiKey: config.openaiApiKey,
       openaiModel: config.openaiModel,
+      rawLogDir: config.outputMode === "obsidian"
+        ? join(config.vaultPath, config.projectWorkspace, "raw_logs", "twitter")
+        : join(config.localRawLogPath, "twitter"),
+      targetDate: date,
     })),
     runGracefulCollector("threads", !!config.threadsUsername, (signal) => collectThreadsPosts({
       username: config.threadsUsername,

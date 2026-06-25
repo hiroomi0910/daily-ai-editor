@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { chromium, type Page } from "playwright";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
 import { describeVisionImage } from "../instagram/index.js";
@@ -13,6 +15,8 @@ export type TwitterCollectorOptions = {
   geminiModel?: string;
   openaiApiKey?: string;
   openaiModel?: string;
+  rawLogDir?: string;
+  targetDate?: string;
 };
 
 export async function collectTwitterPosts(
@@ -82,25 +86,39 @@ export async function collectTwitterPosts(
     // 1. Fetch own tweets from the profile timeline
     const profileUrl = `https://x.com/${username}`;
     console.log(`[Twitter] Loading profile: ${profileUrl}`);
-    await page.goto(profileUrl, { waitUntil: "networkidle", timeout: 25000 });
+    await page.goto(profileUrl, { waitUntil: "load", timeout: 25000 });
     if (options.signal?.aborted) throw new Error("Twitter collection aborted");
     const rawTweets = await scrapeTweetsFromPage(page);
-    const processedTweets = await enrichTweetsWithVision(page, rawTweets, options, getDateStamp(options.now));
+    const processedTweets = await enrichTweetsWithVision(page, rawTweets, options, getDateStamp(options.now), false);
 
     // 2. Fetch likes
     const likesUrl = `https://x.com/${username}/likes`;
     console.log(`[Twitter] Loading likes: ${likesUrl}`);
-    await page.goto(likesUrl, { waitUntil: "networkidle", timeout: 25000 });
+    await page.goto(likesUrl, { waitUntil: "load", timeout: 25000 });
     if (options.signal?.aborted) throw new Error("Twitter collection aborted");
     const rawLikes = await scrapeTweetsFromPage(page);
-    const processedLikes = await enrichTweetsWithVision(page, rawLikes, options, getDateStamp(options.now));
+
+    // Scan historical logged URLs for deduplication
+    const historicalUrls = (options.rawLogDir && options.targetDate)
+      ? await getHistoricalLoggedUrls(options.rawLogDir, options.targetDate)
+      : new Set<string>();
+
+    console.log(`[Twitter] Found ${historicalUrls.size} historically collected tweet URLs for deduplication.`);
+
+    // Filter likes: skip if already logged in history
+    const newLikes = rawLikes.filter((t) => {
+      if (!t.url) return false;
+      return !historicalUrls.has(t.url);
+    });
+
+    console.log(`[Twitter] Filtered down to ${newLikes.length} new likes out of ${rawLikes.length} scraped.`);
+
+    const processedLikes = await enrichTweetsWithVision(page, newLikes, options, getDateStamp(options.now), true);
 
     const allRawTweets = [...rawTweets, ...rawLikes]; // For raw log
     const allProcessedTweets = [...processedTweets, ...processedLikes];
 
     await browser.close();
-
-    const dateStamp = getDateStamp(options.now); // YYYY-MM-DD
 
     const items: CollectedActivityItem[] = [];
 
@@ -114,10 +132,11 @@ export async function collectTwitterPosts(
         id: t.id || String(Math.random()),
         source: "twitter",
         text: isLike ? `Twitterで「いいね」しました: "${t.text}"` : t.text,
-        createdAt: t.createdAt || collectedAt,
+        createdAt: isLike ? collectedAt : (t.createdAt || collectedAt),
         url: t.url || undefined,
         metadata: {
           originalUrl: t.url,
+          tweetCreatedAt: t.createdAt,
         },
       });
     }
@@ -152,14 +171,17 @@ async function enrichTweetsWithVision(
   page: Page,
   rawItems: any[],
   options: TwitterCollectorOptions,
-  dateStamp: string
+  dateStamp: string,
+  isLikeTimeline: boolean,
 ): Promise<any[]> {
   const results: any[] = [];
   for (const t of rawItems) {
-    if (!t.createdAt) continue;
-    const d = new Date(t.createdAt);
-    const jstDate = d.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
-    if (jstDate !== dateStamp) continue;
+    if (!isLikeTimeline) {
+      if (!t.createdAt) continue;
+      const d = new Date(t.createdAt);
+      const jstDate = d.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+      if (jstDate !== dateStamp) continue;
+    }
 
     let finalText = t.text;
     if (t.hasImages && (options.geminiApiKey || options.openaiApiKey)) {
@@ -215,4 +237,61 @@ async function scrapeTweetsFromPage(page: any): Promise<any[]> {
 function getDateStamp(date: Date): string {
   // Always compare using JST YYYY-MM-DD to match filter logic
   return date.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+}
+
+async function getHistoricalLoggedUrls(
+  rawLogDir: string,
+  targetDate: string,
+): Promise<Set<string>> {
+  const loggedUrls = new Set<string>();
+  if (!existsSync(rawLogDir)) {
+    return loggedUrls;
+  }
+
+  async function walk(dir: string) {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith(".json")) {
+        const fileDate = entry.name.slice(0, 10);
+        // Skip current target date's logs and any logs from a newer date (future relative to targetDate)
+        if (fileDate >= targetDate) {
+          continue;
+        }
+        try {
+          const content = await readFile(fullPath, "utf8");
+          const data = JSON.parse(content);
+          if (data && Array.isArray(data.items)) {
+            for (const item of data.items) {
+              if (item.url) {
+                loggedUrls.add(item.url);
+              }
+              if (item.metadata?.originalUrl) {
+                loggedUrls.add(item.metadata.originalUrl);
+              }
+            }
+          }
+          if (data && data.raw && Array.isArray(data.raw.response)) {
+            for (const res of data.raw.response) {
+              if (res.url) {
+                loggedUrls.add(res.url);
+              }
+            }
+          }
+        } catch (e) {
+          // Ignore parse errors on individual files
+        }
+      }
+    }
+  }
+
+  try {
+    await walk(rawLogDir);
+  } catch (e) {
+    console.error(`[Twitter] Error walking raw logs directory: ${e}`);
+  }
+
+  return loggedUrls;
 }
