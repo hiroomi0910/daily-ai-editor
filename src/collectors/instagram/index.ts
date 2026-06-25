@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { DEFAULT_GEMINI_MODELS } from "../../config/constants.js";
 import { chromium, type Browser, type Page } from "playwright";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
 
@@ -735,51 +736,66 @@ export async function describeVisionImage(
   const attemptGemini = async (): Promise<VisionResult> => {
     if (!options.geminiApiKey)
       throw new Error("Gemini API key is not configured.");
-    const model = options.geminiModel ?? "gemini-3.1-flash-lite";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${options.geminiApiKey}`;
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: prompt },
-              { inlineData: { mimeType: "image/png", data: base64Image } },
+    const userModel = options.geminiModel ?? "gemini-3.5-flash";
+    const modelList = !DEFAULT_GEMINI_MODELS.includes(userModel)
+      ? [userModel, ...DEFAULT_GEMINI_MODELS]
+      : [userModel, ...DEFAULT_GEMINI_MODELS.filter((m) => m !== userModel)];
+
+    let lastError: unknown;
+    for (const modelName of modelList) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${options.geminiApiKey}`;
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: prompt },
+                  { inlineData: { mimeType: "image/png", data: base64Image } },
+                ],
+              },
             ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.4,
-          maxOutputTokens: 1024,
-        },
-      }),
-      signal: options.signal,
-    });
+            generationConfig: {
+              temperature: 0.4,
+              maxOutputTokens: 1024,
+            },
+          }),
+          signal: options.signal,
+        });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Gemini Vision API error: ${res.status} - ${errText}`);
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Gemini Vision API error: ${res.status} - ${errText}`);
+        }
+
+        const data = (await res.json()) as {
+          candidates?: Array<{
+            content?: { parts?: Array<{ text?: string }> };
+            finishReason?: string;
+          }>;
+        };
+        const candidate = data.candidates?.[0];
+        const text = candidate?.content?.parts?.[0]?.text?.trim();
+        if (!text) throw new Error("Empty response from Gemini Vision API");
+
+        const truncated = candidate?.finishReason === "MAX_TOKENS";
+        if (truncated) {
+          console.warn(
+            "[Instagram] Gemini Vision output was truncated (MAX_TOKENS)",
+          );
+        }
+        return { text, truncated };
+      } catch (err) {
+        console.warn(`[Instagram] Gemini Vision failed with model ${modelName}: ${err instanceof Error ? err.message : String(err)}. Trying next model...`);
+        lastError = err;
+      }
     }
 
-    const data = (await res.json()) as {
-      candidates?: Array<{
-        content?: { parts?: Array<{ text?: string }> };
-        finishReason?: string;
-      }>;
-    };
-    const candidate = data.candidates?.[0];
-    const text = candidate?.content?.parts?.[0]?.text?.trim();
-    if (!text) throw new Error("Empty response from Gemini Vision API");
-
-    const truncated = candidate?.finishReason === "MAX_TOKENS";
-    if (truncated) {
-      console.warn(
-        "[Instagram] Gemini Vision output was truncated (MAX_TOKENS)",
-      );
-    }
-    return { text, truncated };
+    throw lastError ?? new Error("Gemini Vision API failed on all models.");
   };
 
   const attemptOpenAI = async (): Promise<VisionResult> => {

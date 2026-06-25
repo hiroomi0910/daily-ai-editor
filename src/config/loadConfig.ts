@@ -40,7 +40,7 @@ export function loadConfig(): AppConfig {
   const openaiApiKey = emptyToUndefined(process.env.OPENAI_API_KEY);
   const openaiModel = emptyToUndefined(process.env.SIZU_OPENAI_MODEL) ?? "gpt-4o-mini";
   const geminiApiKey = emptyToUndefined(process.env.GEMINI_API_KEY);
-  const geminiModel = emptyToUndefined(process.env.SIZU_GEMINI_MODEL) ?? "gemini-3.1-flash-lite";
+  const geminiModel = emptyToUndefined(process.env.SIZU_GEMINI_MODEL) ?? "gemini-3.5-flash";
 
   // ブラウザのチャンネル設定（デフォルトは 'chrome'、必要に応じて .env で 'msedge' などに変更可能）
   // const browserChannel = process.env.SIZU_BROWSER_CHANNEL ?? "chrome";
