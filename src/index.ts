@@ -13,6 +13,7 @@ import { publishToSizuDraft } from "./publishers/sizu/index.js";
 import { createLogger } from "./logging/logger.js";
 import { generateOpenAIArticle } from "./generators/openaiArticle.js";
 import { generateArticleWithGemini } from "./generators/geminiArticle.js";
+import { calculateTargetLength } from "./generators/lengthCalculator.js";
 import { buildGenerationInput } from "./generationInputs/renderGenerationInput.js";
 import { writeDailyArticle } from "./writers/obsidian/writeDailyArticle.js";
 import { writeGenerationInput } from "./writers/generationInputs/writeGenerationInput.js";
@@ -340,6 +341,16 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Calculate dynamic article length profile
+  const lengthInfo = calculateTargetLength(generationInput.items, config.articleLengthOverride);
+  logger.info("Calculated target article length profile", {
+    score: lengthInfo.score,
+    tier: lengthInfo.tier,
+    japaneseRange: lengthInfo.japaneseLengthRange,
+    englishRange: lengthInfo.englishLengthRange,
+  });
+  console.log(`[Article Length] Score: ${lengthInfo.score}, Tier: ${lengthInfo.tier} (${lengthInfo.japaneseLengthRange})`);
+
   const spinner = new Spinner();
 
   try {
@@ -352,9 +363,9 @@ async function main(): Promise<void> {
           "CRITICAL: Never start or end the article with generic boilerplate or clichés. Start the very first sentence of the body text directly with a specific activity, thought, or project from today's log.",
           "以下のスキーマに沿ったJSON形式で厳密に出力してください：",
           "{",
-          "  \"title\": \"日記の生成内容にふさわしい、詩的で静かな日本語のタイトル (string)\",",
+          `  "title": "日記の生成内容にふさわしい、詩的で静かな日本語のタイトル${lengthInfo.titleRestrictionJa} (string)",`,
           "  \"tags\": [\"テーマを表す関連タグ ('daily-ai' を必ず含め、その他カスタムタグを数個) (array of strings)\"],",
-          "  \"body\": \"日記の本文（日本語）。500〜800字程度。思索的でパーソナル、ネットネイティブなトーン。 (string)\"",
+          `  "body": "日記の本文（日本語）。${lengthInfo.japaneseLengthRange}。思索的でパーソナル、ネットネイティブなトーン。 (string)"`,
           "}"
         ].join("\n");
         article = await spinner.wrap(
@@ -372,7 +383,7 @@ async function main(): Promise<void> {
           });
           article = await spinner.wrap(
             `Generating article with OpenAI (${config.openaiModel})...`,
-            () => generateOpenAIArticle(config, date, generationInput),
+            () => generateOpenAIArticle(config, date, generationInput, lengthInfo),
             "✓ Article generated (via OpenAI fallback)."
           );
         } else {
@@ -384,7 +395,7 @@ async function main(): Promise<void> {
       logger.info("Generating article using OpenAI API", { model: config.openaiModel });
       article = await spinner.wrap(
         `Generating article with OpenAI (${config.openaiModel})...`,
-        () => generateOpenAIArticle(config, date, generationInput),
+        () => generateOpenAIArticle(config, date, generationInput, lengthInfo),
         "✓ Article generated."
       );
     }

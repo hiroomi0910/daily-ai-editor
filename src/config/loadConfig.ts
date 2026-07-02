@@ -59,9 +59,10 @@ export function loadConfig(): AppConfig {
   const facebookSessionPath = resolve(vaultPath, projectWorkspace, "ai-editor", "settings", "facebook-session.json");
   const sizuSessionPath = resolve(vaultPath, projectWorkspace, "ai-editor", "settings", "sizu-session.json");
 
-  // Parse command line arguments for --date=YYYY-MM-DD and --redo
+  // Parse command line arguments for --date=YYYY-MM-DD, --redo, and --length=short|medium|long|auto
   let targetDate: string | undefined = undefined;
   let redoMode = false;
+  let articleLengthOverride: string | undefined = undefined;
   for (const arg of process.argv) {
     if (arg.startsWith("--date=")) {
       const val = arg.slice(7).trim();
@@ -71,6 +72,9 @@ export function loadConfig(): AppConfig {
     }
     if (arg === "--redo") {
       redoMode = true;
+    }
+    if (arg.startsWith("--length=")) {
+      articleLengthOverride = arg.slice(9).trim().toLowerCase();
     }
   }
 
@@ -87,7 +91,7 @@ export function loadConfig(): AppConfig {
   }
 
   const collectorTimeoutMs = parseBoundedInteger(process.env.SIZU_COLLECTOR_TIMEOUT_MS, {
-    defaultValue: 120_000,
+    defaultValue: 300_000,
     min: 30_000,
     max: 600_000,
   });
@@ -129,6 +133,7 @@ export function loadConfig(): AppConfig {
     redoMode,
     collectorTimeoutMs,
     instagramTimeoutMs,
+    articleLengthOverride,
   };
 }
 

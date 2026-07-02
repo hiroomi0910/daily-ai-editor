@@ -7,6 +7,10 @@ export async function generateOpenAIArticle(
   config: AppConfig,
   date: string,
   generationInput: GenerationInput,
+  lengthInfo: {
+    englishLengthRange: string;
+    titleRestriction: string;
+  }
 ): Promise<GeneratedArticle> {
   if (!config.openaiApiKey) {
     throw new Error("OPENAI_API_KEY is not configured in .env file. Real AI article generation cannot proceed.");
@@ -25,9 +29,9 @@ export async function generateOpenAIArticle(
           "Do NOT adopt the first-person perspective or organization-specific terms (e.g., '弊誌', '弊社') found in the logs of external content. You are observing the user's digital footprint from the outside as their personal assistant.",
           "Respond STRICTLY in JSON format matching the following schema:",
           "{",
-          '  "title": "string (A poetic, quiet Japanese title for the daily editorial article)",',
+          `  "title": "string (A poetic, quiet Japanese title for the daily editorial article${lengthInfo.titleRestriction})",`,
           '  "tags": ["array of strings (Relevant tags including \'daily-ai\' and other custom tags describing the themes)"],',
-          '  "body": "string (The markdown body of the article in Japanese. 500-800 words. Quiet, reflective, personal, editorial, and internet-native. Follow the Article Instructions carefully.)"',
+          `  "body": "string (The markdown body of the article in Japanese. ${lengthInfo.englishLengthRange}. Quiet, reflective, personal, editorial, and internet-native. Follow the Article Instructions carefully.)"`,
           "}"
         ].join("\n"),
       },

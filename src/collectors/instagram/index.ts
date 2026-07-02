@@ -712,6 +712,10 @@ async function withSimpleRetry<T>(
       return await fn();
     } catch (err) {
       lastError = err;
+      if (err && typeof err === "object" && (err as any).status === 429) {
+        // 429 Rate Limitの場合は即時フォールバックさせるためにリトライせず再スロー
+        throw err;
+      }
       if (i < maxRetries)
         await new Promise((resolve) => setTimeout(resolve, delay * (i + 1)));
     }
@@ -738,9 +742,8 @@ export async function describeVisionImage(
       throw new Error("Gemini API key is not configured.");
 
     const userModel = options.geminiModel ?? "gemini-3.5-flash";
-    const modelList = !DEFAULT_GEMINI_MODELS.includes(userModel)
-      ? [userModel, ...DEFAULT_GEMINI_MODELS]
-      : [userModel, ...DEFAULT_GEMINI_MODELS.filter((m) => m !== userModel)];
+    // 無駄なフォールバック試行回数を減らしタイムアウトを防ぐため、Visionでは主要モデルと1.5-flashのみに制限
+    const modelList = Array.from(new Set([userModel, "gemini-2.5-flash", "gemini-1.5-flash"]));
 
     let lastError: unknown;
     for (const modelName of modelList) {
@@ -769,7 +772,9 @@ export async function describeVisionImage(
 
         if (!res.ok) {
           const errText = await res.text();
-          throw new Error(`Gemini Vision API error: ${res.status} - ${errText}`);
+          const err = new Error(`Gemini Vision API error: ${res.status} - ${errText}`);
+          (err as any).status = res.status;
+          throw err;
         }
 
         const data = (await res.json()) as {
@@ -790,8 +795,12 @@ export async function describeVisionImage(
         }
         return { text, truncated };
       } catch (err) {
-        console.warn(`[Instagram] Gemini Vision failed with model ${modelName}: ${err instanceof Error ? err.message : String(err)}. Trying next model...`);
+        console.warn(`[Instagram] Gemini Vision failed with model ${modelName}: ${err instanceof Error ? err.message : String(err)}`);
         lastError = err;
+        if (err && typeof err === "object" && (err as any).status === 429) {
+          console.warn(`[Instagram] Gemini Vision hit 429 rate limit. Skipping other Gemini models to fail fast.`);
+          break;
+        }
       }
     }
 
@@ -831,7 +840,9 @@ export async function describeVisionImage(
 
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(`OpenAI Vision API error: ${res.status} - ${errText}`);
+      const err = new Error(`OpenAI Vision API error: ${res.status} - ${errText}`);
+      (err as any).status = res.status;
+      throw err;
     }
 
     const data = (await res.json()) as {

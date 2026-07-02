@@ -38,4 +38,5 @@ export type AppConfig = {
   redoMode: boolean;
   collectorTimeoutMs: number;
   instagramTimeoutMs: number;
+  articleLengthOverride: string | undefined;
 };
