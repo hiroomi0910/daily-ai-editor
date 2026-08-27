@@ -1,13 +1,26 @@
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { chromium, type Page } from "playwright";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
 import { describeVisionImage } from "../instagram/index.js";
 
+export type LikesLedgerEntry = {
+  url: string;
+  id?: string;
+  text: string;
+  tweetCreatedAt?: string;
+  firstSeenDate: string; // YYYY-MM-DD (JST)
+  firstSeenTimestamp: string; // ISO 8601
+  hasImages?: boolean;
+};
+
+export type LikesLedger = Record<string, LikesLedgerEntry>;
+
 export type TwitterCollectorOptions = {
   username: string | undefined;
   sessionPath: string;
+  ledgerPath?: string;
   now: Date;
   signal?: AbortSignal;
   aiProvider?: "openai" | "gemini";
@@ -51,6 +64,20 @@ export async function collectTwitterPosts(
     };
   }
 
+  const dateStamp = getDateStamp(options.now);
+  const todayStamp = getDateStamp(new Date());
+  const isPastDate = dateStamp < todayStamp;
+
+  // 1. Load likes ledger and perform automatic migration if empty
+  const ledger = options.ledgerPath ? await loadLikesLedger(options.ledgerPath) : {};
+  if (Object.keys(ledger).length === 0 && options.rawLogDir) {
+    const { migratedCount } = await migrateFromRawLogs(options.rawLogDir, ledger);
+    if (migratedCount > 0 && options.ledgerPath) {
+      console.log(`[Twitter Ledger] 過去のraw_logsから ${migratedCount} 件の「いいね」履歴を台帳に初期移行しました。`);
+      await saveLikesLedger(options.ledgerPath, ledger);
+    }
+  }
+
   console.log(`[Twitter] Checking tweets for ${username}...`);
 
   let browser;
@@ -83,37 +110,51 @@ export async function collectTwitterPosts(
       console.warn(`[Twitter] ログイン画面へリダイレクトされました。セッションが切れている可能性があります: ${page.url()}`);
     }
 
-    // 1. Fetch own tweets from the profile timeline
+    // 2. Fetch own tweets from the profile timeline
     const profileUrl = `https://x.com/${username}`;
     console.log(`[Twitter] Loading profile: ${profileUrl}`);
     await page.goto(profileUrl, { waitUntil: "load", timeout: 25000 });
     if (options.signal?.aborted) throw new Error("Twitter collection aborted");
     const rawTweets = await scrapeTweetsFromPage(page);
-    const processedTweets = await enrichTweetsWithVision(page, rawTweets, options, getDateStamp(options.now), false);
+    const processedTweets = await enrichTweetsWithVision(page, rawTweets, options, dateStamp, false);
 
-    // 2. Fetch likes
-    const likesUrl = `https://x.com/${username}/likes`;
-    console.log(`[Twitter] Loading likes: ${likesUrl}`);
-    await page.goto(likesUrl, { waitUntil: "load", timeout: 25000 });
-    if (options.signal?.aborted) throw new Error("Twitter collection aborted");
-    const rawLikes = await scrapeTweetsFromPage(page);
+    // 3. Process likes via Ledger
+    let rawLikes: any[] = [];
+    let likesForTargetDate: LikesLedgerEntry[] = [];
 
-    // Scan historical logged URLs for deduplication
-    const historicalUrls = (options.rawLogDir && options.targetDate)
-      ? await getHistoricalLoggedUrls(options.rawLogDir, options.targetDate)
-      : new Set<string>();
+    const existingLedgerLikes = getLikesForDate(ledger, dateStamp);
 
-    console.log(`[Twitter] Found ${historicalUrls.size} historically collected tweet URLs for deduplication.`);
+    if (isPastDate && existingLedgerLikes.length > 0) {
+      // 過去日の再実行かつ台帳に記録済みの場合：
+      // Xの最新画面を見に行かず台帳から直接復元（未来のいいね混入を完全に防止）
+      console.log(`[Twitter] 過去日 (${dateStamp}) の指定です。永続台帳から ${existingLedgerLikes.length} 件の「いいね」を復元しました（スクレイピングを安全にスキップ）。`);
+      likesForTargetDate = existingLedgerLikes;
+      rawLikes = existingLedgerLikes;
+    } else {
+      // 当日実行または台帳に未記録の日の場合：Xからスクレイピングして台帳に記録
+      const likesUrl = `https://x.com/${username}/likes`;
+      console.log(`[Twitter] Loading likes: ${likesUrl}`);
+      await page.goto(likesUrl, { waitUntil: "load", timeout: 25000 });
+      if (options.signal?.aborted) throw new Error("Twitter collection aborted");
+      rawLikes = await scrapeTweetsFromPage(page);
 
-    // Filter likes: skip if already logged in history
-    const newLikes = rawLikes.filter((t) => {
-      if (!t.url) return false;
-      return !historicalUrls.has(t.url);
-    });
+      const { newLikesCount, dateLikes } = registerScrapedLikes(
+        ledger,
+        rawLikes,
+        dateStamp,
+        collectedAt,
+      );
 
-    console.log(`[Twitter] Filtered down to ${newLikes.length} new likes out of ${rawLikes.length} scraped.`);
+      console.log(`[Twitter] スクレイピングした ${rawLikes.length} 件中、新規「いいね」${newLikesCount} 件を検知・台帳登録しました (対象日: ${dateLikes.length} 件)。`);
 
-    const processedLikes = await enrichTweetsWithVision(page, newLikes, options, getDateStamp(options.now), true);
+      if (options.ledgerPath && newLikesCount > 0) {
+        await saveLikesLedger(options.ledgerPath, ledger);
+      }
+
+      likesForTargetDate = dateLikes;
+    }
+
+    const processedLikes = await enrichTweetsWithVision(page, likesForTargetDate, options, dateStamp, true);
 
     const allRawTweets = [...rawTweets, ...rawLikes]; // For raw log
     const allProcessedTweets = [...processedTweets, ...processedLikes];
@@ -123,7 +164,7 @@ export async function collectTwitterPosts(
     const items: CollectedActivityItem[] = [];
 
     for (const t of allProcessedTweets) {
-      if (!t.text.trim()) {
+      if (!t.text?.trim()) {
         continue;
       }
 
@@ -132,11 +173,12 @@ export async function collectTwitterPosts(
         id: t.id || String(Math.random()),
         source: "twitter",
         text: isLike ? `Twitterで「いいね」しました: "${t.text}"` : t.text,
-        createdAt: isLike ? collectedAt : (t.createdAt || collectedAt),
+        createdAt: isLike ? (t.firstSeenTimestamp || collectedAt) : (t.createdAt || collectedAt),
         url: t.url || undefined,
         metadata: {
           originalUrl: t.url,
-          tweetCreatedAt: t.createdAt,
+          tweetCreatedAt: t.tweetCreatedAt || t.createdAt,
+          firstSeenDate: t.firstSeenDate || dateStamp,
         },
       });
     }
@@ -184,7 +226,7 @@ async function enrichTweetsWithVision(
     }
 
     let finalText = t.text;
-    if (t.hasImages && (options.geminiApiKey || options.openaiApiKey)) {
+    if (t.hasImages && (options.geminiApiKey || options.openaiApiKey) && !page.isClosed()) {
       try {
         console.log(`[Twitter] 画像が含まれるポストを検出しました。解析中: ${t.url}`);
         const article = page.locator(`article:has(a[href*="${t.id}"])`).first();
@@ -209,13 +251,12 @@ async function scrapeTweetsFromPage(page: any): Promise<any[]> {
   await page.waitForTimeout(20000);
   await page.waitForSelector('article[data-testid="tweet"]', { timeout: 10000 }).catch(() => undefined);
 
-  // Scroll down to load more tweets (especially useful for likes)
-  // より多くの「いいね」や投稿を捕捉するためスクロール回数を増やします
+  // Scroll down to load more tweets
   for (let i = 0; i < 6; i++) {
     await page.evaluate(() => window.scrollBy(0, 800));
     await page.waitForTimeout(2000);
   }
-  
+
   return await page.$$eval('article[data-testid="tweet"]', (articles: Element[]) => {
     return articles.map((article) => {
       const textEl = article.querySelector('[data-testid="tweetText"]');
@@ -235,63 +276,178 @@ async function scrapeTweetsFromPage(page: any): Promise<any[]> {
 }
 
 function getDateStamp(date: Date): string {
-  // Always compare using JST YYYY-MM-DD to match filter logic
   return date.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 }
 
-async function getHistoricalLoggedUrls(
+/**
+ * Load the likes ledger JSON file. Returns an empty object if the file doesn't exist.
+ */
+export async function loadLikesLedger(ledgerPath: string): Promise<LikesLedger> {
+  if (!existsSync(ledgerPath)) {
+    return {};
+  }
+  try {
+    const content = await readFile(ledgerPath, "utf8");
+    const data = JSON.parse(content);
+    if (typeof data === "object" && data !== null) {
+      return data as LikesLedger;
+    }
+  } catch (error) {
+    console.warn(`[Twitter Ledger] Failed to parse ledger at ${ledgerPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return {};
+}
+
+/**
+ * Save the likes ledger to disk atomically.
+ */
+export async function saveLikesLedger(ledgerPath: string, ledger: LikesLedger): Promise<void> {
+  try {
+    const dir = dirname(ledgerPath);
+    if (!existsSync(dir)) {
+      await mkdir(dir, { recursive: true });
+    }
+    const jsonString = JSON.stringify(ledger, null, 2);
+    await writeFile(ledgerPath, jsonString, "utf8");
+  } catch (error) {
+    console.error(`[Twitter Ledger] Failed to save ledger to ${ledgerPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Scan historical raw logs (raw_logs/twitter/YYYY/MM/*.json) and migrate them into the ledger.
+ */
+export async function migrateFromRawLogs(
   rawLogDir: string,
-  targetDate: string,
-): Promise<Set<string>> {
-  const loggedUrls = new Set<string>();
+  ledger: LikesLedger,
+): Promise<{ migratedCount: number }> {
   if (!existsSync(rawLogDir)) {
-    return loggedUrls;
+    return { migratedCount: 0 };
   }
 
-  async function walk(dir: string) {
+  const logFiles: { path: string; fileDate: string }[] = [];
+
+  async function collectFiles(dir: string) {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
-        await walk(fullPath);
+        await collectFiles(fullPath);
       } else if (entry.isFile() && entry.name.endsWith(".json")) {
         const fileDate = entry.name.slice(0, 10);
-        // Skip current target date's logs and any logs from a newer date (future relative to targetDate)
-        if (fileDate >= targetDate) {
-          continue;
-        }
-        try {
-          const content = await readFile(fullPath, "utf8");
-          const data = JSON.parse(content);
-          if (data && Array.isArray(data.items)) {
-            for (const item of data.items) {
-              if (item.url) {
-                loggedUrls.add(item.url);
-              }
-              if (item.metadata?.originalUrl) {
-                loggedUrls.add(item.metadata.originalUrl);
-              }
-            }
-          }
-          if (data && data.raw && Array.isArray(data.raw.response)) {
-            for (const res of data.raw.response) {
-              if (res.url) {
-                loggedUrls.add(res.url);
-              }
-            }
-          }
-        } catch (e) {
-          // Ignore parse errors on individual files
+        if (/^\d{4}-\d{2}-\d{2}$/.test(fileDate)) {
+          logFiles.push({ path: fullPath, fileDate });
         }
       }
     }
   }
 
   try {
-    await walk(rawLogDir);
+    await collectFiles(rawLogDir);
   } catch (e) {
-    console.error(`[Twitter] Error walking raw logs directory: ${e}`);
+    console.warn(`[Twitter Ledger] Failed to scan raw logs for migration: ${e instanceof Error ? e.message : String(e)}`);
+    return { migratedCount: 0 };
   }
 
-  return loggedUrls;
+  // Sort files chronologically so older logs take precedence for firstSeenDate
+  logFiles.sort((a, b) => a.fileDate.localeCompare(b.fileDate));
+
+  let migratedCount = 0;
+
+  for (const file of logFiles) {
+    try {
+      const content = await readFile(file.path, "utf8");
+      const data = JSON.parse(content);
+
+      // Check items
+      if (data && Array.isArray(data.items)) {
+        for (const item of data.items) {
+          const url = item.url || item.metadata?.originalUrl;
+          if (url && typeof url === "string" && !ledger[url]) {
+            const isLike = !url.includes(`/status/`) || item.text?.includes("Twitterで「いいね」しました");
+            if (isLike) {
+              ledger[url] = {
+                url,
+                id: item.id,
+                text: cleanLikeText(item.text || ""),
+                tweetCreatedAt: item.metadata?.tweetCreatedAt,
+                firstSeenDate: file.fileDate,
+                firstSeenTimestamp: item.createdAt || `${file.fileDate}T23:59:59.000Z`,
+              };
+              migratedCount++;
+            }
+          }
+        }
+      }
+
+      // Check raw response array if present
+      if (data && data.raw && Array.isArray(data.raw.response)) {
+        for (const res of data.raw.response) {
+          if (res && res.url && typeof res.url === "string" && !ledger[res.url]) {
+            ledger[res.url] = {
+              url: res.url,
+              id: res.id,
+              text: res.text || "",
+              tweetCreatedAt: res.createdAt,
+              firstSeenDate: file.fileDate,
+              firstSeenTimestamp: `${file.fileDate}T23:59:59.000Z`,
+              hasImages: res.hasImages,
+            };
+            migratedCount++;
+          }
+        }
+      }
+    } catch {
+      // Ignore individual file parse errors
+    }
+  }
+
+  return { migratedCount };
+}
+
+function cleanLikeText(text: string): string {
+  const prefix = 'Twitterで「いいね」しました: "';
+  if (text.startsWith(prefix) && text.endsWith('"')) {
+    return text.slice(prefix.length, -1);
+  }
+  return text;
+}
+
+export function getLikesForDate(ledger: LikesLedger, targetDate: string): LikesLedgerEntry[] {
+  return Object.values(ledger).filter((entry) => entry.firstSeenDate === targetDate);
+}
+
+export function registerScrapedLikes(
+  ledger: LikesLedger,
+  scrapedLikes: Array<{
+    url: string;
+    id?: string;
+    text: string;
+    createdAt?: string;
+    hasImages?: boolean;
+  }>,
+  dateStamp: string,
+  nowIso: string,
+): { newLikesCount: number; dateLikes: LikesLedgerEntry[] } {
+  let newLikesCount = 0;
+
+  for (const item of scrapedLikes) {
+    if (!item.url) continue;
+
+    if (!ledger[item.url]) {
+      ledger[item.url] = {
+        url: item.url,
+        id: item.id,
+        text: item.text,
+        tweetCreatedAt: item.createdAt,
+        firstSeenDate: dateStamp,
+        firstSeenTimestamp: nowIso,
+        hasImages: item.hasImages,
+      };
+      newLikesCount++;
+    }
+  }
+
+  const dateLikes = getLikesForDate(ledger, dateStamp);
+  return { newLikesCount, dateLikes };
 }

@@ -246,6 +246,7 @@ async function main(): Promise<void> {
     runGracefulCollector("twitter", !!config.twitterUsername, (signal) => collectTwitterPosts({
       username: config.twitterUsername,
       sessionPath: config.xSessionPath,
+      ledgerPath: config.xLikesLedgerPath,
       now,
       signal,
       aiProvider: config.aiProvider,

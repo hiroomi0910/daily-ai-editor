@@ -51,6 +51,7 @@ export function loadConfig(): AppConfig {
   const twitterUsername = emptyToUndefined(process.env.SIZU_TWITTER_USERNAME);
   const sizuUsername = emptyToUndefined(process.env.SIZU_USERNAME);
   const xSessionPath = resolve(vaultPath, projectWorkspace, "ai-editor", "settings", "x-session.json");
+  const xLikesLedgerPath = resolve(vaultPath, projectWorkspace, "ai-editor", "settings", "twitter-likes-ledger.json");
 
   const threadsUsername = emptyToUndefined(process.env.SIZU_THREADS_USERNAME);
   const instagramUsername = emptyToUndefined(process.env.SIZU_INSTAGRAM_USERNAME);
@@ -122,6 +123,7 @@ export function loadConfig(): AppConfig {
     rssFeeds,
     twitterUsername,
     xSessionPath,
+    xLikesLedgerPath,
     threadsUsername,
     instagramUsername,
     facebookUsername,

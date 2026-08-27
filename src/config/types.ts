@@ -27,6 +27,7 @@ export type AppConfig = {
   rssFeeds: string[];
   twitterUsername: string | undefined;
   xSessionPath: string;
+  xLikesLedgerPath: string;
   threadsUsername: string | undefined;
   instagramUsername: string | undefined;
   facebookUsername: string | undefined;
