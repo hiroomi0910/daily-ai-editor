@@ -409,19 +409,19 @@ async function main(): Promise<void> {
         logger.info("Publishing generated article to Sizu.me as draft...");
         const sizuResult = await spinner.wrap(
           "Saving draft to sizu.me...",
-          () => publishToSizuDraft(config, article),
+          async () => {
+            const res = await publishToSizuDraft(config, article);
+            if (!res.success) {
+              throw new Error(res.note);
+            }
+            return res;
+          },
           "✓ Draft saved to sizu.me."
         );
-        if (sizuResult.success) {
-          logger.info(sizuResult.note, { url: sizuResult.url });
-        } else {
-          logger.error(`Sizu.me draft publishing failed: ${sizuResult.note}`);
-        }
+        logger.info(sizuResult.note, { url: sizuResult.url });
       } catch (sizuError) {
-        logger.error("Unexpected error during Sizu.me draft publishing", {
-          error: sizuError instanceof Error ? sizuError.message : String(sizuError),
-          stack: sizuError instanceof Error ? sizuError.stack : undefined,
-        });
+        const msg = sizuError instanceof Error ? sizuError.message : String(sizuError);
+        logger.error(`Sizu.me draft publishing failed: ${msg}`);
         // 記事自体はObsidianに保存済みのため、全体のプロセスとしては失敗扱い(exitCode=1)にしない
       }
     }

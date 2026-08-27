@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { chromium } from "playwright";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
+import { validateStorageState } from "../../utils/session.js";
 
 export type FacebookCollectorOptions = {
   username: string | undefined;
@@ -27,7 +28,8 @@ export async function collectFacebookActivity(
     };
   }
 
-  if (!existsSync(options.sessionPath)) {
+  const sessionCheck = await validateStorageState(options.sessionPath);
+  if (!sessionCheck.valid) {
     return {
       source: "facebook",
       collectedAt,
@@ -35,7 +37,7 @@ export async function collectFacebookActivity(
       raw: {
         mode: "skipped",
         username,
-        note: `Session file not found at ${options.sessionPath}. Please run 'npm run login:facebook' first.`,
+        note: `Facebook session is invalid (${sessionCheck.error}). Please run 'npm run login:facebook' first.`,
       },
     };
   }

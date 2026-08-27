@@ -1,8 +1,8 @@
-import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { chromium } from "playwright";
 import type { AppConfig } from "../../config/types.js";
 import type { GeneratedArticle } from "../../types/article.js";
+import { validateStorageState } from "../../utils/session.js";
 
 function derivePhaseTag(): string {
   try {
@@ -26,10 +26,12 @@ export async function publishToSizuDraft(
 ): Promise<{ success: boolean; note: string; url?: string }> {
   const sessionPath = config.sizuSessionPath;
 
-  if (!existsSync(sessionPath)) {
+  const sessionCheck = await validateStorageState(sessionPath);
+  if (!sessionCheck.valid) {
+    console.warn(`[Sizu Publisher] セッション検証エラー: ${sessionCheck.error}`);
     return {
       success: false,
-      note: `しずかなインターネットのセッションファイルが見つかりません。先に 'npm run login:sizu' を実行してください。`,
+      note: `しずかなインターネットのセッションが無効です (${sessionCheck.error})。先に 'npm run login:sizu' を実行してください。`,
     };
   }
 
@@ -91,7 +93,7 @@ export async function publishToSizuDraft(
     await page.focus(bodySelector);
     await page.keyboard.insertText(article.body);
 
-    // 2.5. Add Sizu native tags: AI文章生成, 実験中, 日々是好日, Phase4
+    // 2.5. Add Sizu native tags: AI文章生成, 実験中, 日々是好日, PhaseX
     console.log("[Sizu Publisher] ネイティブの「タグ」ボタンをクリックしてタグ追加パネルを開きます...");
     const tagButton = page.locator('button:has-text("タグ")');
     await tagButton.click();

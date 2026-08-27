@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { DEFAULT_GEMINI_MODELS } from "../../config/constants.js";
 import { chromium, type Browser, type Page } from "playwright";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
+import { validateStorageState } from "../../utils/session.js";
 
 const FEED_MIN_BUDGET_MS = 30_000;
 const FEED_MAX_POSTS = 5;
@@ -44,7 +45,8 @@ export async function collectInstagramActivity(
     };
   }
 
-  if (!existsSync(options.sessionPath)) {
+  const sessionCheck = await validateStorageState(options.sessionPath);
+  if (!sessionCheck.valid) {
     return {
       source: "instagram",
       collectedAt,
@@ -52,7 +54,7 @@ export async function collectInstagramActivity(
       raw: {
         mode: "skipped",
         username,
-        note: `Session file not found at ${options.sessionPath}. Please run 'npm run login:instagram' first.`,
+        note: `Instagram session is invalid (${sessionCheck.error}). Please run 'npm run login:instagram' first.`,
       },
     };
   }

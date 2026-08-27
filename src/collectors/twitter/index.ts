@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { chromium, type Page } from "playwright";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
 import { describeVisionImage } from "../instagram/index.js";
+import { validateStorageState } from "../../utils/session.js";
 
 export type LikesLedgerEntry = {
   url: string;
@@ -51,7 +52,8 @@ export async function collectTwitterPosts(
     };
   }
 
-  if (!existsSync(options.sessionPath)) {
+  const sessionCheck = await validateStorageState(options.sessionPath);
+  if (!sessionCheck.valid) {
     return {
       source: "twitter",
       collectedAt,
@@ -59,7 +61,7 @@ export async function collectTwitterPosts(
       raw: {
         mode: "skipped",
         username,
-        note: `Session file not found at ${options.sessionPath}. Please run 'npm run login:x' first to log in and save the session.`,
+        note: `Twitter session is invalid (${sessionCheck.error}). Please run 'npm run login:x' to log in and save the session.`,
       },
     };
   }
