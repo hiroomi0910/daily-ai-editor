@@ -22,7 +22,7 @@ SNSの日常的なアクティビティを収集し、AIが静かで知的な日
 
 ### AI 生成エンジン
 
-- **Gemini 2.5 Flash**（推奨・無料枠対応）
+- **Gemini 3.8 Flash**（推奨・無料枠対応）
 - **OpenAI GPT-4o / GPT-4o-mini**
 
 どちらを使うかは `.env` の `SIZU_AI_PROVIDER` で切り替えられます。
@@ -171,7 +171,14 @@ npm run dev -- --length=long
 
 ## 📌 バージョン履歴 (Version History)
 
-### Version 1.3.0 (最新版)
+### Version 1.4.2 (最新版)
+- **Gemini APIモデルの最新化（Gemini 3.8 Flash対応とフォールバック再編）**:
+  - デフォルトの生成モデルを最新フラッグシップの `gemini-3.8-flash` に刷新。
+  - フォールバックリスト（`DEFAULT_GEMINI_MODELS`）を `gemini-3.8-flash` -> `gemini-3.7-flash` -> `gemini-3.6-flash` -> `gemini-3.5-flash-lite` -> `gemini-2.5-flash` の安定稼働順に再編。
+  - API側で404（廃止）となった旧モデル（`gemini-1.5-flash`, `gemini-2.0-flash`, `gemini-2.5-flash-lite`）を除外。
+  - Instagram Vision 画像解析のモデル順も `gemini-3.8-flash` -> `gemini-3.5-flash-lite` -> `gemini-2.5-flash` に更新。
+
+### Version 1.3.0
 - **動的文章量調整機能 ＆ アクティビティ密度スコアリング**:
   - 1日のアクティビティ総数、有効なSNSソースの多様性、テキスト総文字数から「活動密度スコア（Activity Density Score）」を算出。
   - スコアに基づき、生成記事のボリュームを自動的に「600〜800字程度」(Tier 1)、「1000〜1200字程度」(Tier 2)、「1500〜1800字程度」(Tier 3)の3段階へ動的スケール。

@@ -743,9 +743,9 @@ export async function describeVisionImage(
     if (!options.geminiApiKey)
       throw new Error("Gemini API key is not configured.");
 
-    const userModel = options.geminiModel ?? "gemini-3.5-flash";
-    // 無駄なフォールバック試行回数を減らしタイムアウトを防ぐため、Visionでは主要モデルと1.5-flashのみに制限
-    const modelList = Array.from(new Set([userModel, "gemini-2.5-flash", "gemini-1.5-flash"]));
+    const userModel = options.geminiModel ?? "gemini-3.8-flash";
+    // 無駄なフォールバック試行回数を減らしタイムアウトを防ぐため、Visionでは主要モデルに制限
+    const modelList = Array.from(new Set([userModel, "gemini-3.5-flash-lite", "gemini-2.5-flash"]));
 
     let lastError: unknown;
     for (const modelName of modelList) {
