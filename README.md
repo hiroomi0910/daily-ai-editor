@@ -171,7 +171,11 @@ npm run dev -- --length=long
 
 ## 📌 バージョン履歴 (Version History)
 
-### Version 1.4.2 (最新版)
+### Version 1.5.0 (最新版)
+- **Node.js 24.22.1 への更新（2026-10 セキュリティリリース対応）**:
+  - `.nvmrc` を Node.js `24.22.1` に更新。2026-10-20 の Node.js セキュリティリリース（tls / dns / crypto ほか）と、認証局 eMudhra の鍵漏えいに伴うルート証明書の更新（NSS 3.131.1）を取り込み。
+
+### Version 1.4.2
 - **Gemini APIモデルの最新化（Gemini 3.8 Flash対応とフォールバック再編）**:
   - デフォルトの生成モデルを最新フラッグシップの `gemini-3.8-flash` に刷新。
   - フォールバックリスト（`DEFAULT_GEMINI_MODELS`）を `gemini-3.8-flash` -> `gemini-3.7-flash` -> `gemini-3.6-flash` -> `gemini-3.5-flash-lite` -> `gemini-2.5-flash` の安定稼働順に再編。
