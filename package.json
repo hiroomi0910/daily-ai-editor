@@ -1,10 +1,10 @@
 {
   "name": "sizu-project",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=24.22.1"
   },
   "scripts": {
     "dev": "tsc && node dist/index.js",

@@ -171,7 +171,11 @@ npm run dev -- --length=long
 
 ## 📌 バージョン履歴 (Version History)
 
-### Version 1.5.1 (最新版)
+### Version 1.5.2 (最新版)
+- **動作要件を Node.js 24.22.1 以上に統一**:
+  - `package.json` の `engines.node` を `>=20` から `>=24.22.1` に引き上げ、`.nvmrc` と一致させた（2026-10 のセキュリティリリースを含まない旧版での実行を防ぐ）。
+
+### Version 1.5.1
 - **X (Twitter) のボット検知回避を強化**:
   - 収集時・ログイン時のブラウザ起動で `--enable-automation` を外し、`navigator.webdriver` を無効化するよう変更。
   - 固定の古い User-Agent（Chrome 124）の指定をやめ、起動したブラウザ本来の User-Agent を使うよう変更。
