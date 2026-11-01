@@ -84,23 +84,27 @@ export async function collectTwitterPosts(
 
   let browser;
   try {
+    const launchOptions = {
+      headless: true,
+      channel: "chrome" as const,
+      args: ["--disable-blink-features=AutomationControlled"],
+      ignoreDefaultArgs: ["--enable-automation"],
+    };
     try {
-      browser = await chromium.launch({
-        headless: true,
-        channel: "chrome",
-        args: ["--disable-blink-features=AutomationControlled"],
-      });
+      browser = await chromium.launch(launchOptions);
     } catch {
-      browser = await chromium.launch({
-        headless: true,
-        args: ["--disable-blink-features=AutomationControlled"],
-      });
+      const { channel, ...fallbackOptions } = launchOptions;
+      browser = await chromium.launch(fallbackOptions);
     }
     const context = await browser.newContext({
       storageState: options.sessionPath,
-      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       locale: "ja-JP",
       timezoneId: "Asia/Tokyo",
+    });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", {
+        get: () => undefined,
+      });
     });
     const page = await context.newPage();
 

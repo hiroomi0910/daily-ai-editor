@@ -16,31 +16,39 @@ async function run() {
   // Ensure settings directory exists
   await mkdir(dirname(sessionPath), { recursive: true });
 
+  const launchOptions = {
+    headless: false,
+    channel: "chrome" as const,
+    args: ["--disable-blink-features=AutomationControlled"],
+    ignoreDefaultArgs: ["--enable-automation"],
+  };
+
   let browser;
   try {
     console.log("PCにインストールされている本物の Google Chrome を使用してブラウザを起動します...");
-    browser = await chromium.launch({
-      headless: false,
-      channel: "chrome",
-      args: ["--disable-blink-features=AutomationControlled"],
-    });
+    browser = await chromium.launch(launchOptions);
   } catch (e) {
     console.log("本物の Google Chrome の起動に失敗したため、通常の Playwright Chromium で起動します...");
-    browser = await chromium.launch({
-      headless: false,
-      args: ["--disable-blink-features=AutomationControlled"],
-    });
+    const { channel, ...fallbackOptions } = launchOptions;
+    browser = await chromium.launch(fallbackOptions);
   }
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
-    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     locale: "ja-JP",
     timezoneId: "Asia/Tokyo",
   });
+
+  // 自動化フラグ（navigator.webdriver）の偽装・無効化
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", {
+      get: () => undefined,
+    });
+  });
+
   const page = await context.newPage();
 
-  console.log("ブラウザを起動しています... https://x.com/login を開きます。");
-  await page.goto("https://x.com/login");
+  console.log("ブラウザを起動しています... https://x.com/i/flow/login を開きます。");
+  await page.goto("https://x.com/i/flow/login");
 
   console.log("\n【重要】ブラウザウィンドウでTwitter/Xアカウントに手動でログインしてください。");
   console.log("二要素認証などを含め、ログインを完了させてください。");

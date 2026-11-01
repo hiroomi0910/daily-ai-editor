@@ -171,7 +171,13 @@ npm run dev -- --length=long
 
 ## 📌 バージョン履歴 (Version History)
 
-### Version 1.5.0 (最新版)
+### Version 1.5.1 (最新版)
+- **X (Twitter) のボット検知回避を強化**:
+  - 収集時・ログイン時のブラウザ起動で `--enable-automation` を外し、`navigator.webdriver` を無効化するよう変更。
+  - 固定の古い User-Agent（Chrome 124）の指定をやめ、起動したブラウザ本来の User-Agent を使うよう変更。
+  - ログイン画面の URL を `https://x.com/i/flow/login` に変更。
+
+### Version 1.5.0
 - **Node.js 24.22.1 への更新（2026-10 セキュリティリリース対応）**:
   - `.nvmrc` を Node.js `24.22.1` に更新。2026-10-20 の Node.js セキュリティリリース（tls / dns / crypto ほか）と、認証局 eMudhra の鍵漏えいに伴うルート証明書の更新（NSS 3.131.1）を取り込み。
 
