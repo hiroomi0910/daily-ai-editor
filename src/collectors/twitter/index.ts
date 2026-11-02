@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { chromium, type Page } from "playwright";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
 import { describeVisionImage } from "../instagram/index.js";
-import { validateStorageState } from "../../utils/session.js";
+import { LOGIN_COOKIES, validateStorageState } from "../../utils/session.js";
 
 export type LikesLedgerEntry = {
   url: string;
@@ -52,8 +52,9 @@ export async function collectTwitterPosts(
     };
   }
 
-  const sessionCheck = await validateStorageState(options.sessionPath);
+  const sessionCheck = await validateStorageState(options.sessionPath, LOGIN_COOKIES.x);
   if (!sessionCheck.valid) {
+    console.warn(`[Twitter] Session is invalid (${sessionCheck.error}). Run 'npm run login:x'. Skipping collection.`);
     return {
       source: "twitter",
       collectedAt,

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { DEFAULT_GEMINI_MODELS } from "../../config/constants.js";
 import { chromium, type Browser, type Page } from "playwright";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
-import { validateStorageState } from "../../utils/session.js";
+import { LOGIN_COOKIES, validateStorageState } from "../../utils/session.js";
 
 const FEED_MIN_BUDGET_MS = 30_000;
 const FEED_MAX_POSTS = 5;
@@ -45,7 +45,7 @@ export async function collectInstagramActivity(
     };
   }
 
-  const sessionCheck = await validateStorageState(options.sessionPath, "sessionid");
+  const sessionCheck = await validateStorageState(options.sessionPath, LOGIN_COOKIES.instagram);
   if (!sessionCheck.valid) {
     console.warn(`[Instagram] Session is invalid (${sessionCheck.error}). Run 'npm run login:instagram'. Skipping collection.`);
     return {

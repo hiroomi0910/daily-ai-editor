@@ -171,7 +171,12 @@ npm run dev -- --length=long
 
 ## 📌 バージョン履歴 (Version History)
 
-### Version 1.5.4 (最新版)
+### Version 1.5.5 (最新版)
+- **X / Facebook / しずかなインターネットでも、ログイン未完了のセッションを保存・使用しないよう修正**:
+  - `npm run login:x` / `login:facebook` / `login:sizu` でも、ログイン状態のクッキー（`auth_token` / `c_user` / `__Secure-next-auth.session-token`）を確かめてから保存する。未ログインのまま Enter を押した場合は再確認を求め、`q` で保存せずに終了できる（Instagram と共通の処理 `src/utils/loginPrompt.ts` にまとめた）。
+  - 収集・下書き保存の前に、セッションファイルのログイン状態のクッキーを確かめ、ないか期限切れならブラウザを起動せずにスキップし、コンソールに再ログインのコマンドを案内する。
+
+### Version 1.5.4
 - **Instagram のログイン未完了セッションを保存・使用しないよう修正**:
   - `npm run login:instagram` で、ログイン完了（`sessionid` クッキー）を確かめてから保存するよう変更。未ログインのまま Enter を押した場合は再確認を求め、`q` で保存せずに終了できる。
   - 収集の前にセッションファイルの `sessionid` を確かめ、ないか期限切れならブラウザを起動せずにスキップし、再ログインを案内する。

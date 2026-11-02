@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { chromium } from "playwright";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
-import { validateStorageState } from "../../utils/session.js";
+import { LOGIN_COOKIES, validateStorageState } from "../../utils/session.js";
 
 export type FacebookCollectorOptions = {
   username: string | undefined;
@@ -28,8 +28,9 @@ export async function collectFacebookActivity(
     };
   }
 
-  const sessionCheck = await validateStorageState(options.sessionPath);
+  const sessionCheck = await validateStorageState(options.sessionPath, LOGIN_COOKIES.facebook);
   if (!sessionCheck.valid) {
+    console.warn(`[Facebook] Session is invalid (${sessionCheck.error}). Run 'npm run login:facebook'. Skipping collection.`);
     return {
       source: "facebook",
       collectedAt,

@@ -1,8 +1,9 @@
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { createInterface } from "node:readline";
 import { loadConfig } from "../config/loadConfig.js";
+import { waitForLogin } from "../utils/loginPrompt.js";
+import { LOGIN_COOKIES } from "../utils/session.js";
 
 async function run() {
   const config = loadConfig();
@@ -47,17 +48,13 @@ async function run() {
   console.log("ログインが完了し、ホーム画面が表示されたら、");
   console.log("このターミナルに戻り、Enterキーを押してください。");
 
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  await new Promise<void>((resolve) => {
-    rl.question("\nログイン完了後にEnterキーを押してください > ", () => {
-      rl.close();
-      resolve();
-    });
-  });
+  const loggedIn = await waitForLogin(context, LOGIN_COOKIES.facebook);
+  if (!loggedIn) {
+    await browser.close();
+    console.log("ログインが完了していないため、保存せずに終了しました。");
+    process.exitCode = 1;
+    return;
+  }
 
   console.log("\nセッション情報を保存しています...");
   await context.storageState({ path: sessionPath });

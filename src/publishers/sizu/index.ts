@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { chromium } from "playwright";
 import type { AppConfig } from "../../config/types.js";
 import type { GeneratedArticle } from "../../types/article.js";
-import { validateStorageState } from "../../utils/session.js";
+import { LOGIN_COOKIES, validateStorageState } from "../../utils/session.js";
 
 function derivePhaseTag(): string {
   try {
@@ -26,9 +26,9 @@ export async function publishToSizuDraft(
 ): Promise<{ success: boolean; note: string; url?: string }> {
   const sessionPath = config.sizuSessionPath;
 
-  const sessionCheck = await validateStorageState(sessionPath);
+  const sessionCheck = await validateStorageState(sessionPath, LOGIN_COOKIES.sizu);
   if (!sessionCheck.valid) {
-    console.warn(`[Sizu Publisher] セッション検証エラー: ${sessionCheck.error}`);
+    console.warn(`[Sizu Publisher] Session is invalid (${sessionCheck.error}). Run 'npm run login:sizu'. Skipping draft save.`);
     return {
       success: false,
       note: `しずかなインターネットのセッションが無効です (${sessionCheck.error})。先に 'npm run login:sizu' を実行してください。`,

@@ -2,6 +2,16 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 /**
+ * 各サービスでログイン状態を示すクッキー名（ログインしていなければ付かない）
+ */
+export const LOGIN_COOKIES = {
+  x: "auth_token",
+  instagram: "sessionid",
+  facebook: "c_user",
+  sizu: "__Secure-next-auth.session-token",
+} as const;
+
+/**
  * Playwright storageState JSONファイルの妥当性を事前検証する
  * requiredCookie を指定すると、そのクッキー（ログイン状態を示すもの）が有効期限内で存在するかも確かめる
  */
