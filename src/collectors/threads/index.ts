@@ -222,6 +222,7 @@ export async function collectThreadsPosts(
                 openaiApiKey: options.openaiApiKey,
                 openaiModel: options.openaiModel,
                 signal: options.signal,
+                logLabel: "Threads",
               });
               finalText = `${t.text} (画像描写: ${description})`;
               console.log(`[Threads] 画像解析完了: ${description}`);

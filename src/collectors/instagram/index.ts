@@ -45,8 +45,9 @@ export async function collectInstagramActivity(
     };
   }
 
-  const sessionCheck = await validateStorageState(options.sessionPath);
+  const sessionCheck = await validateStorageState(options.sessionPath, "sessionid");
   if (!sessionCheck.valid) {
+    console.warn(`[Instagram] Session is invalid (${sessionCheck.error}). Run 'npm run login:instagram'. Skipping collection.`);
     return {
       source: "instagram",
       collectedAt,
@@ -745,8 +746,11 @@ export async function describeVisionImage(
     openaiApiKey?: string;
     openaiModel?: string;
     signal?: AbortSignal;
+    /** ログの見出し（呼び出し元の収集元名）。既定は Instagram */
+    logLabel?: string;
   },
 ): Promise<string> {
+  const label = options.logLabel ?? "Instagram";
   const prompt =
     "これはInstagramのスクリーンショットです。画像内の主な内容を、前置きなく1文（80字以内）の日本語で客観的に描写してください。絶対に画像内の文字を1文字ずつインデックス番号付きで書き出したりしないでください（例：『あ(1) い(2)』のような形式は禁止）。箇条書きや不必要な数字、座標の付与も絶対に避けてください。";
 
@@ -803,16 +807,16 @@ export async function describeVisionImage(
         const truncated = candidate?.finishReason === "MAX_TOKENS";
         if (truncated) {
           console.warn(
-            "[Instagram] Gemini Vision output was truncated (MAX_TOKENS)",
+            `[${label}] Gemini Vision output was truncated (MAX_TOKENS)`,
           );
         }
         return { text, truncated };
       } catch (err) {
-        console.warn(`[Instagram] Gemini Vision failed with model ${modelName}: ${err instanceof Error ? err.message : String(err)}`);
+        console.warn(`[${label}] Gemini Vision failed with model ${modelName}: ${err instanceof Error ? err.message : String(err)}`);
         lastError = err;
         if (options.signal?.aborted) throw err;
         if (err && typeof err === "object" && (err as any).status === 429) {
-          console.warn(`[Instagram] Gemini Vision hit 429 rate limit. Skipping other Gemini models to fail fast.`);
+          console.warn(`[${label}] Gemini Vision hit 429 rate limit. Skipping other Gemini models to fail fast.`);
           break;
         }
       }
@@ -871,7 +875,7 @@ export async function describeVisionImage(
 
     const truncated = choice?.finish_reason === "length";
     if (truncated) {
-      console.warn("[Instagram] OpenAI Vision output was truncated (length)");
+      console.warn(`[${label}] OpenAI Vision output was truncated (length)`);
     }
     return { text, truncated };
   };
@@ -894,7 +898,7 @@ export async function describeVisionImage(
     } catch (err) {
       if (!fallback || options.signal?.aborted) throw err;
       console.warn(
-        `[Instagram] Primary Vision failed: ${err instanceof Error ? err.message : String(err)}. Trying fallback...`,
+        `[${label}] Primary Vision failed: ${err instanceof Error ? err.message : String(err)}. Trying fallback...`,
       );
       const fallbackResult = await withSimpleRetry(fallback, undefined, undefined, options.signal);
       return fallbackResult.text;

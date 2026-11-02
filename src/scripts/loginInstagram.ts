@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { loadConfig } from "../config/loadConfig.js";
+import { hasValidCookie } from "../utils/session.js";
 
 async function run() {
   const config = loadConfig();
@@ -52,12 +53,23 @@ async function run() {
     output: process.stdout,
   });
 
-  await new Promise<void>((resolve) => {
-    rl.question("\nログイン完了後にEnterキーを押してください > ", () => {
+  const ask = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve));
+
+  // ログイン前に Enter を押して、未ログインのセッションを保存してしまうのを防ぐ
+  let answer = await ask("\nログイン完了後にEnterキーを押してください > ");
+  while (!hasValidCookie(await context.cookies(), "sessionid")) {
+    if (answer.trim().toLowerCase() === "q") {
       rl.close();
-      resolve();
-    });
-  });
+      await browser.close();
+      console.log("ログインが完了していないため、保存せずに終了しました。");
+      process.exitCode = 1;
+      return;
+    }
+    console.warn("\n⚠️ まだログインが完了していません（sessionid クッキーがありません）。");
+    console.warn("ブラウザでログインを済ませ、ホームのタイムラインが表示されてから Enter を押してください。");
+    answer = await ask("Enter で再確認 / q で保存せずに終了 > ");
+  }
+  rl.close();
 
   console.log("\nセッション情報を保存しています...");
   await context.storageState({ path: sessionPath });

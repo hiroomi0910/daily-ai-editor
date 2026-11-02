@@ -240,7 +240,7 @@ async function enrichTweetsWithVision(
         if (await article.count() > 0) {
           const screenshotBuffer = await article.screenshot({ timeout: 10000 });
           const base64Image = screenshotBuffer.toString("base64");
-          const description = await describeVisionImage(base64Image, options);
+          const description = await describeVisionImage(base64Image, { ...options, logLabel: "Twitter" });
           finalText = `${t.text} (画像描写: ${description})`;
           console.log(`[Twitter] 画像解析完了: ${description}`);
         }
