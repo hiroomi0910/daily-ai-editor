@@ -171,7 +171,12 @@ npm run dev -- --length=long
 
 ## 📌 バージョン履歴 (Version History)
 
-### Version 1.5.5 (最新版)
+### Version 1.5.6 (最新版)
+- **Instagram のボット検知回避を強化（Facebook 経由ログインの二段階認証が通らない問題への対応）**:
+  - `npm run login:instagram` のブラウザ起動で `--enable-automation` を外し、`navigator.webdriver` を無効化。固定の古い User-Agent（Chrome 124）の指定をやめ、起動したブラウザ本来の User-Agent を使うよう変更（X の v1.5.1 と同じ対策）。
+  - Instagram の収集でも同じく `--enable-automation` を外して `navigator.webdriver` を無効化し、User-Agent を起動した Chrome の実際の版番号から作るよう変更（ログイン時とブラウザの見え方をそろえる）。
+
+### Version 1.5.5
 - **X / Facebook / しずかなインターネットでも、ログイン未完了のセッションを保存・使用しないよう修正**:
   - `npm run login:x` / `login:facebook` / `login:sizu` でも、ログイン状態のクッキー（`auth_token` / `c_user` / `__Secure-next-auth.session-token`）を確かめてから保存する。未ログインのまま Enter を押した場合は再確認を求め、`q` で保存せずに終了できる（Instagram と共通の処理 `src/utils/loginPrompt.ts` にまとめた）。
   - 収集・下書き保存の前に、セッションファイルのログイン状態のクッキーを確かめ、ないか期限切れならブラウザを起動せずにスキップし、コンソールに再ログインのコマンドを案内する。

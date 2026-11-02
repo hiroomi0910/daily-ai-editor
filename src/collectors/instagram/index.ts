@@ -71,10 +71,14 @@ export async function collectInstagramActivity(
     const context = await browser.newContext({
       storageState: options.sessionPath,
       viewport: { width: 1280, height: 800 },
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      userAgent: desktopUserAgent(browser),
       locale: "ja-JP",
       timezoneId: "Asia/Tokyo",
+    });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", {
+        get: () => undefined,
+      });
     });
 
     const page = await context.newPage();
@@ -213,18 +217,27 @@ export async function collectInstagramActivity(
 }
 
 async function launchBrowser(): Promise<Browser> {
+  const launchOptions = {
+    headless: true,
+    channel: "chrome" as const,
+    args: ["--disable-blink-features=AutomationControlled"],
+    ignoreDefaultArgs: ["--enable-automation"],
+  };
   try {
-    return await chromium.launch({
-      headless: true,
-      channel: "chrome",
-      args: ["--disable-blink-features=AutomationControlled"],
-    });
+    return await chromium.launch(launchOptions);
   } catch {
-    return await chromium.launch({
-      headless: true,
-      args: ["--disable-blink-features=AutomationControlled"],
-    });
+    const { channel, ...fallbackOptions } = launchOptions;
+    return await chromium.launch(fallbackOptions);
   }
+}
+
+/**
+ * 起動したブラウザの実際の版番号で、ログイン時（ヘッドあり）と同じ形の User-Agent を作る。
+ * ヘッドレスの既定 UA は "HeadlessChrome" を含むため使わず、固定の古い版も避ける（sec-ch-ua と食い違うため）
+ */
+function desktopUserAgent(browser: Browser): string {
+  const major = browser.version().split(".")[0];
+  return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
 }
 
 function hasTimeBudget(deadlineMs: number | undefined, minMs: number): boolean {
