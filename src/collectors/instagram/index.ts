@@ -703,10 +703,19 @@ function getDateStamp(date: Date): string {
 
 type VisionResult = { text: string; truncated: boolean };
 
+// 1回の Vision 呼び出しの上限。混雑したモデルにつかまってコレクター全体の制限時間を使い切らないようにする
+const VISION_REQUEST_TIMEOUT_MS = 30000;
+
+function visionRequestSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(VISION_REQUEST_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
 async function withSimpleRetry<T>(
   fn: () => Promise<T>,
   maxRetries = 2,
   delay = 2000,
+  signal?: AbortSignal,
 ): Promise<T> {
   let lastError: unknown;
   for (let i = 0; i <= maxRetries; i++) {
@@ -714,6 +723,8 @@ async function withSimpleRetry<T>(
       return await fn();
     } catch (err) {
       lastError = err;
+      // コレクターの制限時間切れ後はリトライせず即座に打ち切る
+      if (signal?.aborted) throw err;
       if (err && typeof err === "object" && (err as any).status === 429) {
         // 429 Rate Limitの場合は即時フォールバックさせるためにリトライせず再スロー
         throw err;
@@ -769,7 +780,7 @@ export async function describeVisionImage(
               maxOutputTokens: 1024,
             },
           }),
-          signal: options.signal,
+          signal: visionRequestSignal(options.signal),
         });
 
         if (!res.ok) {
@@ -799,6 +810,7 @@ export async function describeVisionImage(
       } catch (err) {
         console.warn(`[Instagram] Gemini Vision failed with model ${modelName}: ${err instanceof Error ? err.message : String(err)}`);
         lastError = err;
+        if (options.signal?.aborted) throw err;
         if (err && typeof err === "object" && (err as any).status === 429) {
           console.warn(`[Instagram] Gemini Vision hit 429 rate limit. Skipping other Gemini models to fail fast.`);
           break;
@@ -837,7 +849,7 @@ export async function describeVisionImage(
         temperature: 0.4,
         max_tokens: 1024,
       }),
-      signal: options.signal,
+      signal: visionRequestSignal(options.signal),
     });
 
     if (!res.ok) {
@@ -869,10 +881,10 @@ export async function describeVisionImage(
     fallback: (() => Promise<VisionResult>) | undefined,
   ): Promise<string> => {
     try {
-      const result = await withSimpleRetry(primary);
+      const result = await withSimpleRetry(primary, undefined, undefined, options.signal);
       if (result.truncated && fallback) {
         try {
-          const fallbackResult = await withSimpleRetry(fallback);
+          const fallbackResult = await withSimpleRetry(fallback, undefined, undefined, options.signal);
           return fallbackResult.text;
         } catch {
           return result.text;
@@ -880,11 +892,11 @@ export async function describeVisionImage(
       }
       return result.text;
     } catch (err) {
-      if (!fallback) throw err;
+      if (!fallback || options.signal?.aborted) throw err;
       console.warn(
         `[Instagram] Primary Vision failed: ${err instanceof Error ? err.message : String(err)}. Trying fallback...`,
       );
-      const fallbackResult = await withSimpleRetry(fallback);
+      const fallbackResult = await withSimpleRetry(fallback, undefined, undefined, options.signal);
       return fallbackResult.text;
     }
   };
@@ -903,7 +915,7 @@ export async function describeVisionImage(
     );
   }
   if (options.geminiApiKey) {
-    const result = await withSimpleRetry(() => attemptGemini());
+    const result = await withSimpleRetry(() => attemptGemini(), undefined, undefined, options.signal);
     return result.text;
   }
   throw new Error(

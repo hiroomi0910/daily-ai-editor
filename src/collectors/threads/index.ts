@@ -202,7 +202,8 @@ export async function collectThreadsPosts(
         let finalText = t.text;
 
         // 画像解析の実行
-        if (t.hasImages && (options.geminiApiKey || options.openaiApiKey)) {
+        // 制限時間切れ後は画像解析を飛ばし、テキストのみで残りを処理する
+        if (t.hasImages && (options.geminiApiKey || options.openaiApiKey) && !options.signal?.aborted) {
           try {
             console.log(
               `[Threads] 画像が含まれる投稿を検出しました。解析中: ${t.url}`,

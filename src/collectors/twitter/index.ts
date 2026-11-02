@@ -232,7 +232,8 @@ async function enrichTweetsWithVision(
     }
 
     let finalText = t.text;
-    if (t.hasImages && (options.geminiApiKey || options.openaiApiKey) && !page.isClosed()) {
+    // 制限時間切れ後は画像解析を飛ばし、テキストのみで残りを処理する
+    if (t.hasImages && (options.geminiApiKey || options.openaiApiKey) && !page.isClosed() && !options.signal?.aborted) {
       try {
         console.log(`[Twitter] 画像が含まれるポストを検出しました。解析中: ${t.url}`);
         const article = page.locator(`article:has(a[href*="${t.id}"])`).first();
