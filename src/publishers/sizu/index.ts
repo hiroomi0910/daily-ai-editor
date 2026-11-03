@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { chromium } from "playwright";
+import { closeBrowserSafely } from "../../utils/browser.js";
 import type { AppConfig } from "../../config/types.js";
 import type { GeneratedArticle } from "../../types/article.js";
 import { LOGIN_COOKIES, validateStorageState } from "../../utils/session.js";
@@ -188,8 +189,6 @@ export async function publishToSizuDraft(
       note: `しずかなインターネットへの下書き保存エラー: ${errMsg}`,
     };
   } finally {
-    if (browser) {
-      await browser.close();
-    }
+    await closeBrowserSafely(browser, "Sizu Publisher");
   }
 }

@@ -109,6 +109,9 @@ console.warn = function (...args: any[]) {
 };
 // --------------------------------------
 
+// 制限時間が来てから、収集元が部分結果を返すのを待つ猶予
+const COLLECTOR_GRACE_MS = 30000;
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger(config);
@@ -193,9 +196,20 @@ async function main(): Promise<void> {
     const timerId = setTimeout(() => {
       abortController.abort(new Error(`Collection timed out (${Math.round(timeoutMs / 1000)} seconds limit reached)`));
     }, timeoutMs);
+    // 中断の合図を受けても戻らない処理（ブラウザを閉じる処理など）で止まったときのため、
+    // 部分結果を返す猶予を置いたうえで、ここで必ず打ち切る
+    let hardTimerId: NodeJS.Timeout | undefined;
+    const hardTimeout = new Promise<never>((_, reject) => {
+      hardTimerId = setTimeout(() => {
+        reject(new Error(`Collection did not return within ${Math.round((timeoutMs + COLLECTOR_GRACE_MS) / 1000)} seconds. Gave up waiting.`));
+      }, timeoutMs + COLLECTOR_GRACE_MS);
+    });
+    const work = fn(abortController.signal);
+    // 打ち切ったあとに失敗しても、未処理のエラーにしない
+    work.catch(() => undefined);
 
     try {
-      const result = await fn(abortController.signal);
+      const result = await Promise.race([work, hardTimeout]);
       const partialNote =
         result.raw && typeof result.raw === "object" && "mode" in result.raw && result.raw.mode === "partial"
           ? " (partial)"
@@ -216,6 +230,7 @@ async function main(): Promise<void> {
       };
     } finally {
       clearTimeout(timerId);
+      clearTimeout(hardTimerId);
     }
   }
 
@@ -442,7 +457,12 @@ function getDateStamp(date: Date): string {
   return date.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 }
 
-main().catch((error: unknown) => {
-  console.error(error);
-  ;(globalThis as any).process.exitCode = 1;
-});
+main()
+  .catch((error: unknown) => {
+    console.error(error);
+    ;(globalThis as any).process.exitCode = 1;
+  })
+  .finally(() => {
+    // 取り残された処理（閉じ終わらないブラウザなど）があっても、ここで必ず終える
+    process.exit();
+  });

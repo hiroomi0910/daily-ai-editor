@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { chromium } from "playwright";
+import { closeBrowserSafely } from "../../utils/browser.js";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
 import { LOGIN_COOKIES, validateStorageState } from "../../utils/session.js";
 
@@ -105,7 +106,7 @@ export async function collectFacebookActivity(
       }).filter((item) => item.text.length > 5);
     });
 
-    await browser.close();
+    await closeBrowserSafely(browser, "Facebook");
 
     const items: CollectedActivityItem[] = [];
     const dateStamp = getDateStamp(options.now); // YYYY-MM-DD
@@ -146,9 +147,7 @@ export async function collectFacebookActivity(
     };
 
   } catch (error) {
-    if (browser) {
-      await browser.close();
-    }
+    await closeBrowserSafely(browser, "Facebook");
     return {
       source: "facebook",
       collectedAt,

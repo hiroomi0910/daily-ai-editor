@@ -1,4 +1,5 @@
 import { chromium, type Page } from "playwright";
+import { closeBrowserSafely } from "../../utils/browser.js";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
 import { describeVisionImage } from "../instagram/index.js";
 
@@ -249,7 +250,7 @@ export async function collectThreadsPosts(
       }
     }
 
-    await browser.close();
+    await closeBrowserSafely(browser, "Threads");
 
     return {
       source: "threads",
@@ -263,9 +264,7 @@ export async function collectThreadsPosts(
     };
 
   } catch (error) {
-    if (browser) {
-      await browser.close();
-    }
+    await closeBrowserSafely(browser, "Threads");
     return {
       source: "threads",
       collectedAt,

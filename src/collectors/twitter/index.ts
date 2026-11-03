@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { chromium, type Page } from "playwright";
+import { closeBrowserSafely } from "../../utils/browser.js";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
 import { describeVisionImage } from "../instagram/index.js";
 import { LOGIN_COOKIES, validateStorageState } from "../../utils/session.js";
@@ -166,7 +167,7 @@ export async function collectTwitterPosts(
     const allRawTweets = [...rawTweets, ...rawLikes]; // For raw log
     const allProcessedTweets = [...processedTweets, ...processedLikes];
 
-    await browser.close();
+    await closeBrowserSafely(browser, "Twitter");
 
     const items: CollectedActivityItem[] = [];
 
@@ -201,9 +202,7 @@ export async function collectTwitterPosts(
       },
     };
   } catch (error) {
-    if (browser) {
-      await browser.close();
-    }
+    await closeBrowserSafely(browser, "Twitter");
     return {
       source: "twitter",
       collectedAt,

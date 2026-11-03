@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { DEFAULT_GEMINI_MODELS } from "../../config/constants.js";
 import { chromium, type Browser, type Page } from "playwright";
+import { closeBrowserSafely } from "../../utils/browser.js";
 import type { CollectionResult, CollectedActivityItem } from "../types.js";
 import { LOGIN_COOKIES, validateStorageState } from "../../utils/session.js";
 
@@ -210,9 +211,7 @@ export async function collectInstagramActivity(
       },
     };
   } finally {
-    if (browser) {
-      await browser.close().catch(() => undefined);
-    }
+    await closeBrowserSafely(browser, "Instagram");
   }
 }
 
