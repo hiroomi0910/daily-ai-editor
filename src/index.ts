@@ -233,6 +233,7 @@ async function main(): Promise<void> {
       limit: config.blueskyLimit,
       filter: config.blueskyFilter,
       now,
+      targetDate: date,
     })),
     runGracefulCollector("github", !!config.githubUsername, (_signal) => collectGitHubEvents({
       username: config.githubUsername,

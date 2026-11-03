@@ -26,7 +26,8 @@ export async function collectGitHubEvents(
   }
 
   // GitHub API endpoint (supports public events without auth, or authenticated events including private ones)
-  const url = `https://api.github.com/users/${username}/events`;
+  // 既定の30件では過去の日の活動を取りこぼしやすいため、1回で取れる上限の100件を取る
+  const url = `https://api.github.com/users/${username}/events?per_page=100`;
   const headers: Record<string, string> = {
     accept: "application/vnd.github.v3+json",
     "user-agent": "sizu-project/0.1.0",
@@ -58,8 +59,11 @@ export async function collectGitHubEvents(
   const dateStamp = getDateStamp(options.now); // YYYY-MM-DD
 
   // Filter events created on the calendar date "today" (based on options.now)
+  // created_at は UTC のため、日本時間の日付に直してから比べる（0:00〜8:59 の活動が抜けないように）
   const todaysEvents = events.filter((event: any) => {
-    return event.created_at && event.created_at.startsWith(dateStamp);
+    if (!event.created_at) return false;
+    const jstDate = new Date(event.created_at).toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+    return jstDate === dateStamp;
   });
 
   const items: CollectedActivityItem[] = [];

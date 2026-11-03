@@ -4,6 +4,9 @@ import type { CollectionResult } from "../types.js";
 const AUTHOR_FEED_ENDPOINT =
   "https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed";
 
+// 対象日までさかのぼるときに読むページ数の上限（1ページ = limit 件）
+const MAX_PAGES = 10;
+
 type BlueskyFeedFilter =
   | "posts_with_replies"
   | "posts_no_replies"
@@ -16,6 +19,8 @@ export type BlueskyCollectorOptions = {
   limit: number;
   filter: BlueskyFeedFilter;
   now: Date;
+  /** 対象日（日本時間の YYYY-MM-DD）。この日の投稿だけを返す */
+  targetDate: string;
 };
 
 export async function collectBlueskyPosts(
@@ -37,55 +42,109 @@ export async function collectBlueskyPosts(
     };
   }
 
-  const requestUrl = buildAuthorFeedUrl({
-    actor,
-    limit: options.limit,
-    filter: options.filter,
-  });
+  // フィードは新しい順。対象日より古い投稿が出るまで、続きのページ（cursor）をたどる
+  const items: CollectionResult["items"] = [];
+  const pages: Array<{ requestUrl: string; response: unknown }> = [];
+  let cursor: string | undefined;
+  let reachedOlder = false;
 
-  const response = await requestJson(requestUrl);
+  for (let page = 0; page < MAX_PAGES && !reachedOlder; page++) {
+    const requestUrl = buildAuthorFeedUrl({
+      actor,
+      limit: options.limit,
+      filter: options.filter,
+      cursor,
+    });
 
-  if (response.status < 200 || response.status >= 300) {
-    return {
-      source: "bluesky",
-      collectedAt,
-      items: [],
-      raw: {
-        mode: "error",
-        requestUrl,
-        status: response.status,
-        statusText: response.statusText,
-        body: response.body,
-      },
-    };
+    const response = await requestJson(requestUrl);
+
+    if (response.status < 200 || response.status >= 300) {
+      return {
+        source: "bluesky",
+        collectedAt,
+        items: [],
+        raw: {
+          mode: "error",
+          requestUrl,
+          status: response.status,
+          statusText: response.statusText,
+          body: response.body,
+        },
+      };
+    }
+
+    pages.push({ requestUrl, response: response.body });
+    const feed = parseAuthorFeedResponse(response.body);
+
+    for (const entry of feed) {
+      const item = toActivityItem(entry);
+      if (item && toJstDateStamp(item.createdAt) === options.targetDate) {
+        items.push(item);
+      }
+      // 並び順の基準（リポストはリポストした時刻）が対象日より前なら、以降はすべて古い
+      const feedDate = toJstDateStamp(readFeedTimestamp(entry));
+      if (feedDate && feedDate < options.targetDate) {
+        reachedOlder = true;
+      }
+    }
+
+    cursor = readCursor(response.body);
+    if (!cursor || feed.length === 0) break;
   }
 
-  const feed = parseAuthorFeedResponse(response.body);
+  if (!reachedOlder && cursor) {
+    console.warn(
+      `[Bluesky] ${MAX_PAGES} ページ読んでも対象日 (${options.targetDate}) より前に届きませんでした。取りこぼしがあるかもしれません。`,
+    );
+  }
 
   return {
     source: "bluesky",
     collectedAt,
-    items: feed
-      .map((entry) => toActivityItem(entry))
-      .filter((item) => item !== null),
+    items,
     raw: {
       mode: "ok",
-      requestUrl,
-      response: response.body,
+      targetDate: options.targetDate,
+      pages,
     },
   };
+}
+
+function readCursor(responseBody: unknown): string | undefined {
+  return isRecord(responseBody) ? readString(responseBody, "cursor") : undefined;
+}
+
+/**
+ * フィードの並び順の基準になる時刻。リポストはリポストした時刻（reason.indexedAt）、それ以外は投稿の indexedAt
+ */
+function readFeedTimestamp(entry: unknown): string | undefined {
+  if (!isRecord(entry)) return undefined;
+  const reason = readObject(entry, "reason");
+  const reasonAt = reason ? readString(reason, "indexedAt") : undefined;
+  if (reasonAt) return reasonAt;
+  const post = readObject(entry, "post");
+  return post ? readString(post, "indexedAt") : undefined;
+}
+
+function toJstDateStamp(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return d.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 }
 
 function buildAuthorFeedUrl(options: {
   actor: string;
   limit: number;
   filter: BlueskyFeedFilter;
+  cursor?: string;
 }): string {
   const url = new URL(AUTHOR_FEED_ENDPOINT);
   url.searchParams.set("actor", options.actor);
   url.searchParams.set("limit", String(options.limit));
   url.searchParams.set("filter", options.filter);
   url.searchParams.set("includePins", "false");
+  if (options.cursor) url.searchParams.set("cursor", options.cursor);
 
   return url.toString();
 }

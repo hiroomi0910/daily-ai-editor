@@ -171,7 +171,15 @@ npm run dev -- --length=long
 
 ## 📌 バージョン履歴 (Version History)
 
-### Version 1.5.6 (最新版)
+### Version 1.5.7 (最新版)
+- **Bluesky の収集で対象日の投稿だけを返すよう修正**:
+  - これまでは最新の投稿を `SIZU_BLUESKY_LIMIT` 件取るだけで日付を見ておらず、対象日の投稿が0件でも「Found 24 items」のように表示されていた。日本時間で対象日の投稿だけを返すよう変更。
+  - 過去の日を指定したときに取りこぼさないよう、続きのページ（`cursor`）をたどり、対象日より古い投稿が出たところで止める（上限10ページ）。
+- **GitHub の収集で日本時間の 0:00〜8:59 の活動が抜けていた問題を修正**:
+  - UTC の `created_at` をそのまま日付と比べていたのを、日本時間の日付に直してから比べるよう変更。
+  - 1回で取るイベントを既定の30件から上限の100件（`per_page=100`）に増やし、過去の日の活動を取りこぼしにくくした。
+
+### Version 1.5.6
 - **Instagram のボット検知回避を強化（Facebook 経由ログインの二段階認証が通らない問題への対応）**:
   - `npm run login:instagram` のブラウザ起動で `--enable-automation` を外し、`navigator.webdriver` を無効化。固定の古い User-Agent（Chrome 124）の指定をやめ、起動したブラウザ本来の User-Agent を使うよう変更（X の v1.5.1 と同じ対策）。
   - Instagram の収集でも同じく `--enable-automation` を外して `navigator.webdriver` を無効化し、User-Agent を起動した Chrome の実際の版番号から作るよう変更（ログイン時とブラウザの見え方をそろえる）。
